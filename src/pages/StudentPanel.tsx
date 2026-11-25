@@ -2,11 +2,18 @@ import React, { useEffect, useState } from "react";
 import { StudentLayout } from "../components/layouts/StudentLayout";
 import { useAuth } from "../auth/AuthContext";
 import api from "../api/axios";
-import { Send, Bot, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Send, Bot, AlertCircle, CheckCircle2, Calculator, Printer, BarChart3 } from "lucide-react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 export const StudentPanel: React.FC = () => {
   const { user } = useAuth();
   const [riskData, setRiskData] = useState<any>(null);
+  const [attendanceData, setAttendanceData] = useState<{ totalClasses: number; percentage: number; records: any[] }>({
+    totalClasses: 0,
+    percentage: 0,
+    records: [],
+  });
+  const [marksRecords, setMarksRecords] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatHistory, setChatHistory] = useState<{ sender: "user" | "ai"; text: string }[]>([
     { sender: "ai", text: "Hi! I'm your IntelliCampus AI Study Advisor. Ask me how to improve your attendance or exam readiness!" },
@@ -15,7 +22,34 @@ export const StudentPanel: React.FC = () => {
 
   useEffect(() => {
     api.get("/risk/my").then((res) => setRiskData(res.data)).catch(console.error);
+    api.get("/attendance/my").then((res) => setAttendanceData(res.data)).catch(console.error);
+    api.get("/marks/my").then((res) => setMarksRecords(res.data.records || [])).catch(console.error);
   }, []);
+
+  // 75% Attendance Recovery / Margin Calculator
+  const total = attendanceData.totalClasses || 0;
+  const attended = attendanceData.records?.filter((r) => r.status === "Present" || r.status === "Late").length || 0;
+  const pct = attendanceData.percentage || 0;
+
+  let attendanceAdvice = "No classes logged yet. Once faculty marks attendance, your 75% target tracker will appear here.";
+  if (total > 0) {
+    if (pct < 75) {
+      const needed = Math.ceil((0.75 * total - attended) / 0.25);
+      attendanceAdvice = `You need to attend the next ${needed} consecutive lecture${needed > 1 ? "s" : ""} to cross the 75% eligibility threshold.`;
+    } else {
+      const canSkip = Math.floor(attended / 0.75 - total);
+      attendanceAdvice =
+        canSkip > 0
+          ? `You are safely above 75%. You can miss up to ${canSkip} upcoming lecture${canSkip > 1 ? "s" : ""} and still remain eligible.`
+          : "You are right on the 75% threshold. Avoid missing the next class to stay safe.";
+    }
+  }
+
+  // Format marks for chart
+  const chartData = marksRecords.map((m) => ({
+    name: `${m.subject} (${m.examType})`,
+    score: Math.round((m.score / (m.maxScore || 100)) * 100),
+  }));
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,19 +74,29 @@ export const StudentPanel: React.FC = () => {
   return (
     <StudentLayout>
       <div className="space-y-6">
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <h1 className="text-2xl font-bold text-slate-900">Welcome, {user?.name}</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Roll No: {user?.rollNumber || "N/A"} • Department: {user?.department} • Semester {user?.semester || 1}
-          </p>
+        {/* Header with Print Report Button */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Welcome, {user?.name}</h1>
+            <p className="text-sm text-slate-500 mt-1">
+              Roll No: {user?.rollNumber || "N/A"} • Department: {user?.department} • Semester {user?.semester || 1}
+            </p>
+          </div>
+          <button
+            onClick={() => window.print()}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold border border-slate-200 transition w-fit"
+          >
+            <Printer className="w-4 h-4" /> Print Summary
+          </button>
         </div>
 
+        {/* KPI Cards */}
         {riskData && (
           <div className="grid sm:grid-cols-3 gap-4">
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase">Overall Attendance</p>
               <p className="text-3xl font-bold mt-1 text-blue-600">{riskData.attendancePct}%</p>
-              <p className="text-xs text-slate-500 mt-1">Target: ≥ 75.0%</p>
+              <p className="text-xs text-slate-500 mt-1">Target: ≥ 75.0% ({attended}/{total} classes)</p>
             </div>
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase">Average Marks</p>
@@ -74,6 +118,42 @@ export const StudentPanel: React.FC = () => {
           </div>
         )}
 
+        {/* 75% Attendance Recovery / Safety Calculator */}
+        <div
+          className={`p-4 rounded-xl border flex items-start gap-3 ${
+            pct < 75 && total > 0
+              ? "bg-amber-50 border-amber-200 text-amber-900"
+              : "bg-blue-50 border-blue-200 text-blue-900"
+          }`}
+        >
+          <Calculator className="w-5 h-5 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-bold">75% Attendance Eligibility Tracker</p>
+            <p className="text-xs mt-0.5 opacity-90">{attendanceAdvice}</p>
+          </div>
+        </div>
+
+        {/* Subject-Wise Performance Chart */}
+        {chartData.length > 0 && (
+          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2 mb-4">
+              <BarChart3 className="w-5 h-5 text-blue-600" /> Assessment Performance Overview (%)
+            </h2>
+            <div className="h-60 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: "#475569" }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "#475569" }} />
+                  <Tooltip />
+                  <Bar dataKey="score" fill="#2563eb" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {/* Gemini AI Academic Advisor */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center gap-2 font-semibold text-slate-800">
             <Bot className="w-5 h-5 text-blue-600" /> Gemini AI Academic Advisor
