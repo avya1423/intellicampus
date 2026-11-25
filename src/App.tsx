@@ -10,8 +10,10 @@ import { Features, SystemArchitecture, MLDesign, APIDocs } from "./pages/InfoPag
 import { StudentPanel } from "./pages/StudentPanel";
 import { AttendancePage } from "./pages/student/AttendancePage";
 import { MarksPage } from "./pages/student/MarksPage";
+import { StudentProfile } from "./pages/student/StudentProfile";
 import { TeacherPanel } from "./pages/TeacherPanel";
 import { TeacherRiskDashboard } from "./pages/TeacherRiskDashboard";
+import { TeacherProfile } from "./pages/teacher/TeacherProfile";
 import { AdminPanel } from "./pages/AdminPanel";
 
 export function App() {
@@ -52,6 +54,14 @@ export function App() {
               </RoleRoute>
             }
           />
+          <Route
+            path="/student/profile"
+            element={
+              <RoleRoute allowedRoles={["student"]}>
+                <StudentProfile />
+              </RoleRoute>
+            }
+          />
 
           {/* Teacher Routes */}
           <Route
@@ -67,6 +77,14 @@ export function App() {
             element={
               <RoleRoute allowedRoles={["teacher", "admin"]}>
                 <TeacherRiskDashboard />
+              </RoleRoute>
+            }
+          />
+          <Route
+            path="/teacher/profile"
+            element={
+              <RoleRoute allowedRoles={["teacher", "admin"]}>
+                <TeacherProfile />
               </RoleRoute>
             }
           />
