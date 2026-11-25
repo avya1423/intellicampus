@@ -1,4 +1,5 @@
 import express, { Response } from "express";
+import bcrypt from "bcryptjs";
 import User from "../models/User";
 import ProfileRequest from "../models/ProfileRequest";
 import { protect } from "../middleware/auth";
@@ -26,6 +27,43 @@ router.get("/users", protect, authorizeRoles("admin"), async (_req, res: Respons
   try {
     const users = await User.find().select("-password").sort({ createdAt: -1 });
     res.json(users);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Admin Directly Creates a Verified Admin / Faculty / Student Account
+router.post("/create-user", protect, authorizeRoles("admin"), async (req, res: Response): Promise<void> => {
+  try {
+    const { name, email, password, role, department, rollNumber } = req.body;
+    const existing = await User.findOne({ email });
+    if (existing) {
+      res.status(400).json({ message: "An account with this email already exists." });
+      return;
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      role: role || "admin",
+      department: department || "Administration",
+      rollNumber: role === "student" ? rollNumber : undefined,
+      isApproved: true,
+      approvalStatus: "Approved",
+    });
+
+    res.status(201).json({
+      message: `${newUser.role.toUpperCase()} account created and verified successfully!`,
+      user: {
+        _id: newUser._id,
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
+        department: newUser.department,
+      },
+    });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
