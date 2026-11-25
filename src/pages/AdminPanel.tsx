@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Navbar } from "../components/Navbar";
 import { useAuth } from "../auth/AuthContext";
 import api from "../api/axios";
-import { Search, Check, X, ShieldCheck, Users, GraduationCap, Clock, UserCheck } from "lucide-react";
+import { Search, Check, X, ShieldCheck, Users, GraduationCap, Clock, UserCheck, UserPlus } from "lucide-react";
 
 export const AdminPanel: React.FC = () => {
   const { user } = useAuth();
@@ -11,6 +11,16 @@ export const AdminPanel: React.FC = () => {
   const [requests, setRequests] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
+
+  // Create new Admin/User modal state
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState("admin");
+  const [newDept, setNewDept] = useState("Administration");
+  const [createMsg, setCreateMsg] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const loadAllData = () => {
     api.get("/admin/stats").then((res) => setStats(res.data)).catch(console.error);
@@ -21,6 +31,31 @@ export const AdminPanel: React.FC = () => {
   useEffect(() => {
     loadAllData();
   }, []);
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    setCreateMsg("");
+    try {
+      const { data } = await api.post("/admin/create-user", {
+        name: newName,
+        email: newEmail,
+        password: newPassword,
+        role: newRole,
+        department: newDept,
+      });
+      setCreateMsg(data.message);
+      setNewName("");
+      setNewEmail("");
+      setNewPassword("");
+      setShowCreateForm(false);
+      loadAllData();
+    } catch (err: any) {
+      setCreateMsg(err.response?.data?.message || "Failed to create account.");
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const handleUserApproval = async (id: string, status: "Approved" | "Rejected") => {
     await api.patch(`/admin/users/${id}/approval`, { status });
@@ -47,7 +82,7 @@ export const AdminPanel: React.FC = () => {
     <div className="min-h-screen bg-slate-50">
       <Navbar />
       <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-        {/* Admin Profile Header */}
+        {/* Admin Profile Header + Create Button */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700 font-bold text-xl">
@@ -60,7 +95,96 @@ export const AdminPanel: React.FC = () => {
               </p>
             </div>
           </div>
+
+          <button
+            onClick={() => setShowCreateForm(!showCreateForm)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold shadow-sm transition w-fit"
+          >
+            <UserPlus className="w-4 h-4" />
+            {showCreateForm ? "Close Form" : "Create New Admin / User"}
+          </button>
         </div>
+
+        {createMsg && (
+          <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium">
+            {createMsg}
+          </div>
+        )}
+
+        {/* Create New Verified Admin / User Form */}
+        {showCreateForm && (
+          <form onSubmit={handleCreateUser} className="bg-white p-6 rounded-2xl border border-blue-200 shadow-sm space-y-4">
+            <h2 className="text-lg font-bold text-slate-900">Create Verified Campus Account</h2>
+            <p className="text-xs text-slate-500">
+              Accounts created here are automatically verified and can sign in immediately.
+            </p>
+            <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Full Name</label>
+                <input
+                  type="text"
+                  required
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="e.g. Dr. Rajesh Sharma"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
+                <input
+                  type="email"
+                  required
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="admin2@university.edu"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Temporary Password</label>
+                <input
+                  type="password"
+                  required
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Role</label>
+                <select
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                >
+                  <option value="admin">Administrator</option>
+                  <option value="teacher">Faculty</option>
+                  <option value="student">Student</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Department</label>
+                <input
+                  type="text"
+                  value={newDept}
+                  onChange={(e) => setNewDept(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold shadow-sm"
+                >
+                  {creating ? "Creating..." : "Create & Verify Account"}
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
 
         {/* KPI Cards */}
         <div className="grid sm:grid-cols-4 gap-4">
