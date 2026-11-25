@@ -1,0 +1,7 @@
+[
+  { "subject": "Data Structures & Algorithms", "examType": "Midterm", "score": 78, "maxScore": 100 },
+  { "subject": "Database Management Systems", "examType": "Midterm", "score": 64, "maxScore": 100 },
+  { "subject": "Operating Systems", "examType": "Midterm", "score": 45, "maxScore": 100 },
+  { "subject": "Computer Networks", "examType": "Quiz", "score": 82, "maxScore": 100 },
+  { "subject": "Machine Learning", "examType": "Assignment", "score": 91, "maxScore": 100 }
+]
