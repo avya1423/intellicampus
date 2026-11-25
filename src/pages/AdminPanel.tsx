@@ -1,61 +1,192 @@
 import React, { useEffect, useState } from "react";
 import { Navbar } from "../components/Navbar";
+import { useAuth } from "../auth/AuthContext";
 import api from "../api/axios";
+import { Search, Check, X, ShieldCheck, Users, GraduationCap, Clock } from "lucide-react";
 
 export const AdminPanel: React.FC = () => {
+  const { user } = useAuth();
   const [stats, setStats] = useState<any>({ totalStudents: 0, totalTeachers: 0, pendingRequests: 0 });
   const [users, setUsers] = useState<any[]>([]);
+  const [requests, setRequests] = useState<any[]>([]);
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
 
-  useEffect(() => {
+  const loadAllData = () => {
     api.get("/admin/stats").then((res) => setStats(res.data)).catch(console.error);
     api.get("/admin/users").then((res) => setUsers(res.data)).catch(console.error);
+    api.get("/admin/profile-requests").then((res) => setRequests(res.data)).catch(console.error);
+  };
+
+  useEffect(() => {
+    loadAllData();
   }, []);
+
+  const handleRequestAction = async (id: string, status: "Approved" | "Rejected") => {
+    await api.patch(`/admin/profile-requests/${id}`, { status });
+    loadAllData();
+  };
+
+  const filteredUsers = users.filter((u) => {
+    const matchesRole = roleFilter === "all" || u.role === roleFilter;
+    const matchesSearch =
+      u.name?.toLowerCase().includes(search.toLowerCase()) ||
+      u.email?.toLowerCase().includes(search.toLowerCase()) ||
+      (u.rollNumber || "").toLowerCase().includes(search.toLowerCase());
+    return matchesRole && matchesSearch;
+  });
 
   return (
     <div className="min-h-screen bg-slate-50">
       <Navbar />
       <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-        <h1 className="text-2xl font-bold text-slate-900">Campus Administration Control Center</h1>
-
-        <div className="grid sm:grid-cols-3 gap-4">
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-            <p className="text-xs font-semibold text-slate-500 uppercase">Registered Students</p>
-            <p className="text-3xl font-bold text-blue-600 mt-1">{stats.totalStudents}</p>
-          </div>
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-            <p className="text-xs font-semibold text-slate-500 uppercase">Faculty Members</p>
-            <p className="text-3xl font-bold text-emerald-600 mt-1">{stats.totalTeachers}</p>
-          </div>
-          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-            <p className="text-xs font-semibold text-slate-500 uppercase">Pending Profile Requests</p>
-            <p className="text-3xl font-bold text-amber-600 mt-1">{stats.pendingRequests}</p>
+        {/* Admin Profile Header */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700 font-bold text-xl">
+              {user?.name?.charAt(0).toUpperCase() || "A"}
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Campus Administration Control Center</h1>
+              <p className="text-sm text-slate-500 flex items-center gap-2 mt-0.5">
+                <ShieldCheck className="w-4 h-4 text-indigo-600" /> Logged in as {user?.name} ({user?.email})
+              </p>
+            </div>
           </div>
         </div>
 
+        {/* KPI Cards */}
+        <div className="grid sm:grid-cols-3 gap-4">
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase">Registered Students</p>
+              <p className="text-3xl font-bold text-blue-600 mt-1">{stats.totalStudents}</p>
+            </div>
+            <GraduationCap className="w-8 h-8 text-blue-200" />
+          </div>
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase">Faculty Members</p>
+              <p className="text-3xl font-bold text-emerald-600 mt-1">{stats.totalTeachers}</p>
+            </div>
+            <Users className="w-8 h-8 text-emerald-200" />
+          </div>
+          <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase">Pending Profile Requests</p>
+              <p className="text-3xl font-bold text-amber-600 mt-1">{stats.pendingRequests}</p>
+            </div>
+            <Clock className="w-8 h-8 text-amber-200" />
+          </div>
+        </div>
+
+        {/* Student Profile Change Requests Queue */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900">
-            All Campus Directory Users
+            Student Profile Correction Requests
           </div>
-          <table className="w-full text-sm text-left">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-              <tr>
-                <th className="py-3 px-4 font-semibold">Name</th>
-                <th className="py-3 px-4 font-semibold">Email</th>
-                <th className="py-3 px-4 font-semibold">Role</th>
-                <th className="py-3 px-4 font-semibold">Department</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {users.map((u) => (
-                <tr key={u._id} className="hover:bg-slate-50/60">
-                  <td className="py-3 px-4 font-medium text-slate-900">{u.name}</td>
-                  <td className="py-3 px-4 text-slate-600">{u.email}</td>
-                  <td className="py-3 px-4 uppercase text-xs font-bold text-blue-700">{u.role}</td>
-                  <td className="py-3 px-4 text-slate-600">{u.department}</td>
+          <div className="divide-y divide-slate-200">
+            {requests.map((req) => (
+              <div key={req._id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <p className="font-semibold text-slate-900 text-sm">
+                    {req.studentId?.name || "Student"} ({req.studentId?.email})
+                  </p>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    Requested Update: <span className="font-mono text-blue-700 font-semibold">{JSON.stringify(req.requestedChanges)}</span>
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">Reason: {req.reason}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {req.status === "Pending" ? (
+                    <>
+                      <button
+                        onClick={() => handleRequestAction(req._id, "Approved")}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                      >
+                        <Check className="w-3.5 h-3.5" /> Approve
+                      </button>
+                      <button
+                        onClick={() => handleRequestAction(req._id, "Rejected")}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                      >
+                        <X className="w-3.5 h-3.5" /> Reject
+                      </button>
+                    </>
+                  ) : (
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-bold ${
+                        req.status === "Approved"
+                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          : "bg-red-50 text-red-700 border border-red-200"
+                      }`}
+                    >
+                      {req.status}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+            {requests.length === 0 && (
+              <p className="p-6 text-center text-xs text-slate-400">No profile requests in queue.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Searchable Campus Directory */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span className="font-bold text-slate-900">Campus Directory ({filteredUsers.length})</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search name, email, roll no..."
+                  className="pl-9 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm"
+                />
+              </div>
+              <select
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+                className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm"
+              >
+                <option value="all">All Roles</option>
+                <option value="student">Students</option>
+                <option value="teacher">Teachers</option>
+                <option value="admin">Admins</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                <tr>
+                  <th className="py-3 px-4 font-semibold">Name</th>
+                  <th className="py-3 px-4 font-semibold">Email</th>
+                  <th className="py-3 px-4 font-semibold">Roll / Sem</th>
+                  <th className="py-3 px-4 font-semibold">Role</th>
+                  <th className="py-3 px-4 font-semibold">Department</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {filteredUsers.map((u) => (
+                  <tr key={u._id} className="hover:bg-slate-50/60">
+                    <td className="py-3 px-4 font-medium text-slate-900">{u.name}</td>
+                    <td className="py-3 px-4 text-slate-600">{u.email}</td>
+                    <td className="py-3 px-4 text-slate-600">
+                      {u.role === "student" ? `${u.rollNumber || "—"} (Sem ${u.semester || 1})` : "—"}
+                    </td>
+                    <td className="py-3 px-4 uppercase text-xs font-bold text-blue-700">{u.role}</td>
+                    <td className="py-3 px-4 text-slate-600">{u.department}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
