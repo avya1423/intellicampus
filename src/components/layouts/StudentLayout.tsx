@@ -1,14 +1,15 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CalendarCheck, BookOpen, UserCircle } from "lucide-react";
+import { LayoutDashboard, CalendarCheck, BookOpen, UserCircle, CalendarDays } from "lucide-react";
 import { Navbar } from "../Navbar";
 
 export const StudentLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { pathname } = useLocation();
   const navItems = [
     { label: "Overview & AI Advisor", path: "/student", icon: LayoutDashboard },
-    { label: "Attendance Log", path: "/student/attendance", icon: CalendarCheck },
+    { label: "Attendance & Target", path: "/student/attendance", icon: CalendarCheck },
     { label: "Marks & Grades", path: "/student/marks", icon: BookOpen },
+    { label: "Academic Calendar", path: "/student/calendar", icon: CalendarDays },
     { label: "My Profile", path: "/student/profile", icon: UserCircle },
   ];
 
