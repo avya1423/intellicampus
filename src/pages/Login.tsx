@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, BrainCircuit } from "lucide-react";
+import { ArrowLeft, BrainCircuit, CheckCircle2 } from "lucide-react";
 import api from "../api/axios";
 import { useAuth } from "../auth/AuthContext";
 import { Navbar } from "../components/Navbar";
@@ -14,6 +14,7 @@ export const Login: React.FC = () => {
   const [department, setDepartment] = useState("Computer Science");
   const [rollNumber, setRollNumber] = useState("");
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
   const { login } = useAuth();
@@ -22,6 +23,7 @@ export const Login: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccessMsg("");
     setLoading(true);
     try {
       const endpoint = isRegister ? "/auth/register" : "/auth/login";
@@ -29,6 +31,14 @@ export const Login: React.FC = () => {
         ? { name, email, password, role, department, rollNumber }
         : { email, password };
       const { data } = await api.post(endpoint, payload);
+
+      if (data.pendingApproval) {
+        setSuccessMsg(data.message);
+        setIsRegister(false);
+        setPassword("");
+        return;
+      }
+
       login(data.token, data.user);
 
       if (data.user.role === "admin") navigate("/admin");
@@ -65,9 +75,16 @@ export const Login: React.FC = () => {
           </h2>
           <p className="text-sm text-slate-500 text-center mb-6">
             {isRegister
-              ? "Create your official Student, Faculty, or Admin account"
-              : "Enter your institutional credentials to continue"}
+              ? "New accounts require Campus Administrator approval"
+              : "Enter your verified institutional credentials"}
           </p>
+
+          {successMsg && (
+            <div className="mb-4 p-3.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
+              <span>{successMsg}</span>
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
@@ -99,7 +116,6 @@ export const Login: React.FC = () => {
                     >
                       <option value="student">Student</option>
                       <option value="teacher">Faculty</option>
-                      <option value="admin">Administrator</option>
                     </select>
                   </div>
                   <div>
@@ -157,21 +173,22 @@ export const Login: React.FC = () => {
               disabled={loading}
               className="w-full py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 shadow-sm transition"
             >
-              {loading ? "Authenticating..." : isRegister ? "Create Account" : "Sign In"}
+              {loading ? "Processing..." : isRegister ? "Submit for Approval" : "Sign In"}
             </button>
           </form>
 
           <p className="mt-6 pt-4 border-t border-slate-100 text-center text-sm text-slate-600">
-            {isRegister ? "Already registered?" : "New to IntelliCampus?"}{" "}
+            {isRegister ? "Already verified?" : "New to IntelliCampus?"}{" "}
             <button
               type="button"
               onClick={() => {
                 setIsRegister(!isRegister);
                 setError("");
+                setSuccessMsg("");
               }}
               className="text-blue-600 font-semibold hover:underline"
             >
-              {isRegister ? "Sign In" : "Register Account"}
+              {isRegister ? "Sign In" : "Request Account"}
             </button>
           </p>
         </div>
