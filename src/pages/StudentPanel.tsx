@@ -2,7 +2,17 @@ import React, { useEffect, useState } from "react";
 import { StudentLayout } from "../components/layouts/StudentLayout";
 import { useAuth } from "../auth/AuthContext";
 import api from "../api/axios";
-import { Send, Bot, AlertCircle, CheckCircle2, Calculator, Printer, BarChart3 } from "lucide-react";
+import {
+  Send,
+  Bot,
+  AlertCircle,
+  CheckCircle2,
+  Calculator,
+  Printer,
+  BarChart3,
+  Megaphone,
+  ExternalLink,
+} from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 export const StudentPanel: React.FC = () => {
@@ -14,6 +24,7 @@ export const StudentPanel: React.FC = () => {
     records: [],
   });
   const [marksRecords, setMarksRecords] = useState<any[]>([]);
+  const [notices, setNotices] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatHistory, setChatHistory] = useState<{ sender: "user" | "ai"; text: string }[]>([
     { sender: "ai", text: "Hi! I'm your IntelliCampus AI Study Advisor. Ask me how to improve your attendance or exam readiness!" },
@@ -24,9 +35,14 @@ export const StudentPanel: React.FC = () => {
     api.get("/risk/my").then((res) => setRiskData(res.data)).catch(console.error);
     api.get("/attendance/my").then((res) => setAttendanceData(res.data)).catch(console.error);
     api.get("/marks/my").then((res) => setMarksRecords(res.data.records || [])).catch(console.error);
-  }, []);
+    if (user?.department) {
+      api
+        .get(`/notices?department=${encodeURIComponent(user.department)}&semester=${user.semester || 1}`)
+        .then((res) => setNotices(res.data))
+        .catch(console.error);
+    }
+  }, [user?.department, user?.semester]);
 
-  // 75% Attendance Recovery / Margin Calculator
   const total = attendanceData.totalClasses || 0;
   const attended = attendanceData.records?.filter((r) => r.status === "Present" || r.status === "Late").length || 0;
   const pct = attendanceData.percentage || 0;
@@ -45,7 +61,6 @@ export const StudentPanel: React.FC = () => {
     }
   }
 
-  // Format marks for chart
   const chartData = marksRecords.map((m) => ({
     name: `${m.subject} (${m.examType})`,
     score: Math.round((m.score / (m.maxScore || 100)) * 100),
@@ -118,7 +133,7 @@ export const StudentPanel: React.FC = () => {
           </div>
         )}
 
-        {/* 75% Attendance Recovery / Safety Calculator */}
+        {/* 75% Attendance Eligibility Tracker */}
         <div
           className={`p-4 rounded-xl border flex items-start gap-3 ${
             pct < 75 && total > 0
@@ -132,6 +147,38 @@ export const StudentPanel: React.FC = () => {
             <p className="text-xs mt-0.5 opacity-90">{attendanceAdvice}</p>
           </div>
         </div>
+
+        {/* Live Faculty Notices & Study Material Links */}
+        {notices.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 text-sm flex items-center gap-2">
+              <Megaphone className="w-4 h-4 text-blue-600" /> Class Announcements & Study Resources
+            </div>
+            <div className="divide-y divide-slate-200">
+              {notices.map((n) => (
+                <div key={n._id} className="p-4 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900 text-sm">{n.title}</span>
+                    <span className="text-[11px] text-slate-500">
+                      Posted by {n.postedBy} • {new Date(n.createdAt).toLocaleDateString("en-IN")}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600">{n.message}</p>
+                  {n.resourceLink && (
+                    <a
+                      href={n.resourceLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:underline pt-1"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" /> Access Study Material
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Subject-Wise Performance Chart */}
         {chartData.length > 0 && (
