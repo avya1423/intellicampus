@@ -5,17 +5,17 @@ import { protect } from "../middleware/auth";
 const router = express.Router();
 
 router.post("/analyze-student", protect, async (req, res: Response): Promise<void> => {
+  const { studentName, attendancePct, avgMarksPct, riskLevel, factors } = req.body;
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+
+  const fallbackText = `• Academic Status: ${studentName} has a ${riskLevel} risk score (${attendancePct}% attendance, ${avgMarksPct}% avg marks).\n• Key Indicators: ${factors?.join(", ") || "Routine monitoring"}.\n• Action Plan: Conduct bi-weekly progress review and assign targeted practice modules.`;
+
+  if (!apiKey || apiKey === "your_google_gemini_api_key_here") {
+    res.json({ insight: fallbackText });
+    return;
+  }
+
   try {
-    const { studentName, attendancePct, avgMarksPct, riskLevel, factors } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey || apiKey === "your_google_gemini_api_key_here") {
-      res.json({
-        insight: `[AI Advisory Summary] ${studentName} currently shows a ${riskLevel} risk profile (${attendancePct}% attendance, ${avgMarksPct}% average score). Primary indicators: ${factors?.join(", ")}. Recommended Action: Schedule a 1-on-1 mentoring session and assign a 2-week attendance & revision tracker.`,
-      });
-      return;
-    }
-
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
@@ -29,7 +29,8 @@ router.post("/analyze-student", protect, async (req, res: Response): Promise<voi
     const result = await model.generateContent(prompt);
     res.json({ insight: result.response.text() });
   } catch (error: any) {
-    res.status(500).json({ message: error.message });
+    console.error("Gemini Analyze Error:", error?.message || error);
+    res.json({ insight: fallbackText });
   }
 });
 
