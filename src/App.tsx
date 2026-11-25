@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { RoleRoute } from "./auth/RoleRoute";
 
@@ -14,6 +14,7 @@ import { StudentProfile } from "./pages/student/StudentProfile";
 import { TeacherPanel } from "./pages/TeacherPanel";
 import { TeacherRiskDashboard } from "./pages/TeacherRiskDashboard";
 import { TeacherProfile } from "./pages/teacher/TeacherProfile";
+import { AcademicCalendarPage } from "./pages/AcademicCalendarPage";
 import { AdminPanel } from "./pages/AdminPanel";
 
 export function App() {
@@ -55,6 +56,14 @@ export function App() {
             }
           />
           <Route
+            path="/student/calendar"
+            element={
+              <RoleRoute allowedRoles={["student"]}>
+                <AcademicCalendarPage />
+              </RoleRoute>
+            }
+          />
+          <Route
             path="/student/profile"
             element={
               <RoleRoute allowedRoles={["student"]}>
@@ -81,6 +90,14 @@ export function App() {
             }
           />
           <Route
+            path="/teacher/calendar"
+            element={
+              <RoleRoute allowedRoles={["teacher", "admin"]}>
+                <AcademicCalendarPage />
+              </RoleRoute>
+            }
+          />
+          <Route
             path="/teacher/profile"
             element={
               <RoleRoute allowedRoles={["teacher", "admin"]}>
@@ -98,6 +115,9 @@ export function App() {
               </RoleRoute>
             }
           />
+
+          {/* Fallback Route */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>
