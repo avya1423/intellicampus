@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, BrainCircuit } from "lucide-react";
 import api from "../api/axios";
 import { useAuth } from "../auth/AuthContext";
 import { Navbar } from "../components/Navbar";
@@ -7,11 +8,11 @@ import { Navbar } from "../components/Navbar";
 export const Login: React.FC = () => {
   const [isRegister, setIsRegister] = useState(false);
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("student@intellicampus.edu");
-  const [password, setPassword] = useState("password123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [role, setRole] = useState("student");
   const [department, setDepartment] = useState("Computer Science");
-  const [rollNumber, setRollNumber] = useState("CS2026-105");
+  const [rollNumber, setRollNumber] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -34,7 +35,7 @@ export const Login: React.FC = () => {
       else if (data.user.role === "teacher") navigate("/teacher");
       else navigate("/student");
     } catch (err: any) {
-      setError(err.response?.data?.message || "Authentication failed. Ensure backend server is running.");
+      setError(err.response?.data?.message || "Invalid credentials or server unreachable.");
     } finally {
       setLoading(false);
     }
@@ -43,13 +44,29 @@ export const Login: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <Navbar />
-      <div className="flex-1 flex items-center justify-center px-4 py-12">
+      <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
+        <div className="w-full max-w-md mb-4">
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-blue-600 transition"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to Home
+          </Link>
+        </div>
+
         <div className="bg-white w-full max-w-md p-8 rounded-2xl border border-slate-200 shadow-sm">
-          <h2 className="text-2xl font-bold text-slate-900 text-center mb-2">
-            {isRegister ? "Create IntelliCampus Account" : "Welcome Back"}
+          <div className="flex justify-center mb-3">
+            <div className="w-11 h-11 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
+              <BrainCircuit className="w-6 h-6" />
+            </div>
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 text-center mb-1">
+            {isRegister ? "Campus Portal Registration" : "Institutional Sign In"}
           </h2>
           <p className="text-sm text-slate-500 text-center mb-6">
-            {isRegister ? "Register as Student, Teacher, or Admin" : "Sign in to access your role dashboard"}
+            {isRegister
+              ? "Create your official Student, Faculty, or Admin account"
+              : "Enter your institutional credentials to continue"}
           </p>
 
           {error && (
@@ -68,44 +85,58 @@ export const Login: React.FC = () => {
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Anjali Kumari"
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="Enter full name"
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Role</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Account Role</label>
                     <select
                       value={role}
                       onChange={(e) => setRole(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
                     >
                       <option value="student">Student</option>
-                      <option value="teacher">Teacher</option>
-                      <option value="admin">Admin</option>
+                      <option value="teacher">Faculty</option>
+                      <option value="admin">Administrator</option>
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Roll No (Students)</label>
-                    <input
-                      type="text"
-                      value={rollNumber}
-                      onChange={(e) => setRollNumber(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg"
-                    />
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      {role === "student" ? "University Roll No" : "Department"}
+                    </label>
+                    {role === "student" ? (
+                      <input
+                        type="text"
+                        required
+                        value={rollNumber}
+                        onChange={(e) => setRollNumber(e.target.value)}
+                        placeholder="e.g. CS2026-101"
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={department}
+                        onChange={(e) => setDepartment(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                      />
+                    )}
                   </div>
                 </div>
               </>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Email Address</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Institutional Email</label>
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="name@university.edu"
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
 
@@ -116,54 +147,31 @@ export const Login: React.FC = () => {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="••••••••"
+                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 shadow-sm transition"
+              className="w-full py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 shadow-sm transition"
             >
-              {loading ? "Please wait..." : isRegister ? "Register" : "Sign In"}
+              {loading ? "Authenticating..." : isRegister ? "Create Account" : "Sign In"}
             </button>
           </form>
 
-          <div className="mt-6 pt-4 border-t border-slate-200 text-xs text-slate-500 space-y-1.5">
-            <p className="font-semibold text-slate-700">Quick Demo Logins (after npm run seed):</p>
-            <div className="flex flex-wrap gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => { setEmail("student@intellicampus.edu"); setPassword("password123"); setIsRegister(false); }}
-                className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-md hover:bg-blue-50 hover:text-blue-700 font-medium"
-              >
-                Student Demo
-              </button>
-              <button
-                type="button"
-                onClick={() => { setEmail("teacher@intellicampus.edu"); setPassword("password123"); setIsRegister(false); }}
-                className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-md hover:bg-blue-50 hover:text-blue-700 font-medium"
-              >
-                Teacher Demo
-              </button>
-              <button
-                type="button"
-                onClick={() => { setEmail("admin@intellicampus.edu"); setPassword("password123"); setIsRegister(false); }}
-                className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-md hover:bg-blue-50 hover:text-blue-700 font-medium"
-              >
-                Admin Demo
-              </button>
-            </div>
-          </div>
-
-          <p className="mt-4 text-center text-sm text-slate-600">
-            {isRegister ? "Already have an account?" : "Don't have an account?"}{" "}
+          <p className="mt-6 pt-4 border-t border-slate-100 text-center text-sm text-slate-600">
+            {isRegister ? "Already registered?" : "New to IntelliCampus?"}{" "}
             <button
               type="button"
-              onClick={() => setIsRegister(!isRegister)}
+              onClick={() => {
+                setIsRegister(!isRegister);
+                setError("");
+              }}
               className="text-blue-600 font-semibold hover:underline"
             >
-              {isRegister ? "Sign In" : "Create Account"}
+              {isRegister ? "Sign In" : "Register Account"}
             </button>
           </p>
         </div>
