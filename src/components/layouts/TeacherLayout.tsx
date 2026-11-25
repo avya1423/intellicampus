@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Users, AlertTriangle } from "lucide-react";
+import { Users, AlertTriangle, UserCircle } from "lucide-react";
 import { Navbar } from "../Navbar";
 
 export const TeacherLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -8,6 +8,7 @@ export const TeacherLayout: React.FC<{ children: React.ReactNode }> = ({ childre
   const navItems = [
     { label: "Classroom & Marks Entry", path: "/teacher", icon: Users },
     { label: "AI Risk Analytics", path: "/teacher/risk", icon: AlertTriangle },
+    { label: "Faculty Profile", path: "/teacher/profile", icon: UserCircle },
   ];
 
   return (
