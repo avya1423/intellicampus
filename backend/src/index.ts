@@ -14,6 +14,7 @@ import chatbotRoutes from "./routes/chatbot";
 import correctionRoutes from "./routes/corrections";
 import routineRoutes from "./routes/routine";
 import calendarRoutes from "./routes/calendar";
+import noticeRoutes from "./routes/notices";
 
 dotenv.config();
 
@@ -36,6 +37,7 @@ app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/corrections", correctionRoutes);
 app.use("/api/routine", routineRoutes);
 app.use("/api/calendar", calendarRoutes);
+app.use("/api/notices", noticeRoutes);
 
 const PORT = process.env.PORT || 5000;
 
