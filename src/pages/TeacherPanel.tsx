@@ -19,6 +19,7 @@ import {
   ExternalLink,
   UserCheck,
   Eye,
+  Save,
 } from "lucide-react";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -29,11 +30,25 @@ const DEPARTMENTS = [
   "Mechanical Engineering",
   "Civil Engineering",
 ];
+const PERIOD_PRESETS = [
+  "Period 1 (09:00 - 10:00)",
+  "Period 2 (10:00 - 11:00)",
+  "Period 3 (11:15 - 12:15)",
+  "Period 4 (01:00 - 02:00)",
+  "Period 5 (02:00 - 03:00)",
+  "Period 6 (03:00 - 04:00)",
+];
+
+interface DraftSlot {
+  dayOfWeek: string;
+  timeSlot: string;
+  subject: string;
+}
 
 export const TeacherPanel: React.FC = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<
-    "attendance" | "history" | "routine" | "marks" | "notices" | "corrections"
+    "attendance" | "routine" | "history" | "marks" | "notices" | "corrections"
   >("attendance");
 
   const [students, setStudents] = useState<any[]>([]);
@@ -51,16 +66,23 @@ export const TeacherPanel: React.FC = () => {
 
   const getDayFromDateStr = (dateString: string): string => {
     const d = new Date(dateString + "T00:00:00");
-    const idx = d.getDay(); // 0=Sun, 1=Mon...
+    const idx = d.getDay();
     return idx >= 1 && idx <= 6 ? DAYS[idx - 1] : "Monday";
   };
 
   const [dayOfWeek, setDayOfWeek] = useState<string>(getDayFromDateStr(todayStr));
 
-  // Flexible / Proxy Mode
+  // Attendance Slot & Proxy Mode
   const [proxyMode, setProxyMode] = useState<boolean>(false);
-  const [selectedSubject, setSelectedSubject] = useState<string>("");
+  const [selectedSlotId, setSelectedSlotId] = useState<string>("");
+  const [proxySubject, setProxySubject] = useState<string>("");
   const [customSubject, setCustomSubject] = useState<string>("");
+
+  // Master Weekly Routine Builder State
+  const [subjectPool, setSubjectPool] = useState<string[]>([]);
+  const [newPoolSubject, setNewPoolSubject] = useState<string>("");
+  const [weeklyDraft, setWeeklyDraft] = useState<DraftSlot[]>([]);
+  const [savingRoutine, setSavingRoutine] = useState<boolean>(false);
 
   // Student Search & Bulk Attendance
   const [studentSearch, setStudentSearch] = useState<string>("");
@@ -71,12 +93,8 @@ export const TeacherPanel: React.FC = () => {
   // 360 Student Dossier Modal
   const [inspectedStudent, setInspectedStudent] = useState<any | null>(null);
 
-  // Routine Creator
-  const [newSubName, setNewSubName] = useState<string>("");
-  const [newTimeSlot, setNewTimeSlot] = useState<string>("10:00 AM - 11:00 AM");
-  const [addingSlot, setAddingSlot] = useState<boolean>(false);
-
   // Batch Marks Entry Grid
+  const [marksSubject, setMarksSubject] = useState<string>("");
   const [examType, setExamType] = useState<string>("Midterm");
   const [batchScores, setBatchScores] = useState<Record<string, string>>({});
   const [savingMarks, setSavingMarks] = useState<boolean>(false);
@@ -111,6 +129,29 @@ export const TeacherPanel: React.FC = () => {
     loadAll();
   }, []);
 
+  // Sync Master Weekly Draft whenever Branch, Semester, or saved routineSlots change
+  useEffect(() => {
+    const existing = routineSlots.filter(
+      (r) => r.department === department && r.semester === semester
+    );
+    setWeeklyDraft(
+      existing.map((r) => ({
+        dayOfWeek: r.dayOfWeek,
+        timeSlot: r.timeSlot,
+        subject: r.subject,
+      }))
+    );
+    const uniqueSubs = Array.from(new Set(existing.map((r) => r.subject)));
+    setSubjectPool(uniqueSubs);
+    if (uniqueSubs.length > 0) {
+      setMarksSubject(uniqueSubs[0]);
+      setProxySubject(uniqueSubs[0]);
+    } else {
+      setMarksSubject("__custom__");
+      setProxySubject("__custom__");
+    }
+  }, [department, semester, routineSlots]);
+
   const handleDateChange = (newDate: string) => {
     setSelectedDate(newDate);
     if (newDate) {
@@ -133,14 +174,92 @@ export const TeacherPanel: React.FC = () => {
   useEffect(() => {
     if (!proxyMode) {
       if (todayScheduledSlots.length > 0) {
-        setSelectedSubject(todayScheduledSlots[0].subject);
+        setSelectedSlotId(todayScheduledSlots[0]._id);
       } else {
-        setSelectedSubject("");
+        setSelectedSlotId("");
       }
-    } else if (allSemesterSubjects.length > 0 && !selectedSubject) {
-      setSelectedSubject(allSemesterSubjects[0]);
     }
-  }, [department, semester, dayOfWeek, proxyMode, routineSlots.length]);
+  }, [department, semester, dayOfWeek, proxyMode, routineSlots]);
+
+  // Master Weekly Routine Builder Helpers
+  const addSubjectToPool = () => {
+    const trimmed = newPoolSubject.trim();
+    if (!trimmed) return;
+    if (!subjectPool.includes(trimmed)) {
+      setSubjectPool((prev) => [...prev, trimmed]);
+    }
+    setNewPoolSubject("");
+  };
+
+  const addPeriodToDay = (day: string) => {
+    const daySlots = weeklyDraft.filter((s) => s.dayOfWeek === day);
+    const nextPreset =
+      PERIOD_PRESETS[daySlots.length] || `Period ${daySlots.length + 1}`;
+    setWeeklyDraft((prev) => [
+      ...prev,
+      {
+        dayOfWeek: day,
+        timeSlot: nextPreset,
+        subject: subjectPool[0] || "",
+      },
+    ]);
+  };
+
+  const updateDraftSlot = (
+    day: string,
+    indexInDay: number,
+    field: "timeSlot" | "subject",
+    value: string
+  ) => {
+    let counter = -1;
+    setWeeklyDraft((prev) =>
+      prev.map((slot) => {
+        if (slot.dayOfWeek === day) {
+          counter += 1;
+          if (counter === indexInDay) {
+            return { ...slot, [field]: value };
+          }
+        }
+        return slot;
+      })
+    );
+  };
+
+  const removeDraftSlot = (day: string, indexInDay: number) => {
+    let counter = -1;
+    setWeeklyDraft((prev) =>
+      prev.filter((slot) => {
+        if (slot.dayOfWeek === day) {
+          counter += 1;
+          return counter !== indexInDay;
+        }
+        return true;
+      })
+    );
+  };
+
+  const handleSaveWeeklyMaster = async () => {
+    setSavingRoutine(true);
+    setMsg("");
+    try {
+      await api.post("/routine/bulk", {
+        department,
+        semester,
+        slots: weeklyDraft.map((s) => ({
+          ...s,
+          teacherName: user?.name,
+        })),
+      });
+      setMsg(
+        `Master Weekly Timetable saved for ${department} Semester ${semester}! It will automatically repeat every week.`
+      );
+      loadAll();
+    } catch {
+      setMsg("Failed to save weekly timetable.");
+    } finally {
+      setSavingRoutine(false);
+    }
+  };
 
   const classStudents = students.filter(
     (s) =>
@@ -150,8 +269,16 @@ export const TeacherPanel: React.FC = () => {
         (s.rollNumber || "").toLowerCase().includes(studentSearch.toLowerCase()))
   );
 
-  const activeSubjectName =
-    selectedSubject === "__custom__" ? customSubject.trim() : selectedSubject;
+  const selectedRoutineObj = todayScheduledSlots.find((s) => s._id === selectedSlotId);
+  const activeSubjectName = proxyMode
+    ? proxySubject === "__custom__"
+      ? customSubject.trim()
+      : proxySubject
+    : selectedRoutineObj?.subject || "";
+
+  const activeTimeSlot = proxyMode
+    ? "Proxy / Extra Session"
+    : selectedRoutineObj?.timeSlot || "";
 
   const markAllAs = (status: "Present" | "Absent") => {
     const updated = { ...bulkStatus };
@@ -163,7 +290,7 @@ export const TeacherPanel: React.FC = () => {
 
   const handleBulkSubmit = async () => {
     if (!activeSubjectName) {
-      setMsg("Please select or enter a subject name first.");
+      setMsg("Please select or enter a subject first.");
       return;
     }
     if (classStudents.length === 0) {
@@ -179,13 +306,14 @@ export const TeacherPanel: React.FC = () => {
           api.post("/attendance/mark", {
             studentId: s._id,
             subject: subjectLabel,
+            timeSlot: activeTimeSlot,
             status: bulkStatus[s._id] || "Present",
             date: selectedDate,
           })
         )
       );
       setMsg(
-        `Attendance saved for ${classStudents.length} students on ${selectedDate} in ${subjectLabel}!`
+        `Attendance saved for ${classStudents.length} students on ${selectedDate} in ${subjectLabel} (${activeTimeSlot})!`
       );
       api.get("/attendance/all").then((res) => setAttendanceLogs(res.data));
     } catch {
@@ -195,35 +323,9 @@ export const TeacherPanel: React.FC = () => {
     }
   };
 
-  const handleAddRoutineSlot = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSubName.trim()) return;
-    setAddingSlot(true);
-    try {
-      await api.post("/routine", {
-        department,
-        semester,
-        dayOfWeek,
-        subject: newSubName.trim(),
-        timeSlot: newTimeSlot,
-        teacherName: user?.name,
-      });
-      setNewSubName("");
-      setMsg(`Added ${newSubName} to ${department} Sem ${semester} (${dayOfWeek}) routine!`);
-      loadAll();
-    } finally {
-      setAddingSlot(false);
-    }
-  };
-
-  const handleDeleteRoutineSlot = async (id: string) => {
-    await api.delete(`/routine/${id}`);
-    loadAll();
-  };
-
   const handleBatchMarksSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const markSub = activeSubjectName || customSubject.trim();
+    const markSub = marksSubject === "__custom__" ? customSubject.trim() : marksSubject;
     if (!markSub) {
       setMsg("Please select or enter a subject for marks entry.");
       return;
@@ -398,7 +500,7 @@ export const TeacherPanel: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Faculty Classroom & Academic Hub</h1>
             <p className="text-sm text-slate-500 mt-1">
-              Flexible routine attendance, backdated registers, batch marks entry, study announcements & correction approvals
+              One-time Master Weekly Timetable, period-wise attendance, batch marks & student correction approvals
             </p>
           </div>
 
@@ -412,20 +514,20 @@ export const TeacherPanel: React.FC = () => {
               <ClipboardList className="w-4 h-4" /> Take Attendance
             </button>
             <button
+              onClick={() => setActiveTab("routine")}
+              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                activeTab === "routine" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <CalendarClock className="w-4 h-4" /> Weekly Routine Setup
+            </button>
+            <button
               onClick={() => setActiveTab("history")}
               className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 activeTab === "history" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <History className="w-4 h-4" /> Register Logs
-            </button>
-            <button
-              onClick={() => setActiveTab("routine")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "routine" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <CalendarClock className="w-4 h-4" /> Subject Routine
             </button>
             <button
               onClick={() => setActiveTab("marks")}
@@ -465,7 +567,7 @@ export const TeacherPanel: React.FC = () => {
           </div>
         )}
 
-        {/* Shared Branch / Semester / Date / Day Selector Bar */}
+        {/* Shared Branch / Semester / Date Selector Bar */}
         {activeTab !== "corrections" && activeTab !== "history" && (
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
@@ -496,33 +598,37 @@ export const TeacherPanel: React.FC = () => {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Class Date</label>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => handleDateChange(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-medium"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Timetable Day</label>
-              <select
-                value={dayOfWeek}
-                onChange={(e) => setDayOfWeek(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-medium"
-              >
-                {DAYS.map((day) => (
-                  <option key={day} value={day}>
-                    {day}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {activeTab === "attendance" && (
+              <>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Class Date</label>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => handleDateChange(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Auto-Synced Day</label>
+                  <select
+                    value={dayOfWeek}
+                    onChange={(e) => setDayOfWeek(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-medium"
+                  >
+                    {DAYS.map((day) => (
+                      <option key={day} value={day}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
           </div>
         )}
 
-        {/* TAB 1: FLEXIBLE ROUTINE & BACKDATED BULK ATTENDANCE */}
+        {/* TAB 1: FLEXIBLE ROUTINE & PERIOD-WISE BULK ATTENDANCE */}
         {activeTab === "attendance" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-200 bg-slate-50/70 space-y-4">
@@ -532,37 +638,41 @@ export const TeacherPanel: React.FC = () => {
                     <label className="block text-xs font-bold text-slate-600 mb-1">
                       {proxyMode
                         ? `All Subjects (${department} Sem ${semester})`
-                        : `Scheduled on ${dayOfWeek} (${department} Sem ${semester})`}
+                        : `Scheduled Classes on ${dayOfWeek} (${department} Sem ${semester})`}
                     </label>
-                    <select
-                      value={selectedSubject}
-                      onChange={(e) => setSelectedSubject(e.target.value)}
-                      className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm min-w-[240px]"
-                    >
-                      {!proxyMode ? (
-                        todayScheduledSlots.length > 0 ? (
+                    {!proxyMode ? (
+                      <select
+                        value={selectedSlotId}
+                        onChange={(e) => setSelectedSlotId(e.target.value)}
+                        className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm min-w-[280px]"
+                      >
+                        {todayScheduledSlots.length > 0 ? (
                           todayScheduledSlots.map((slot) => (
-                            <option key={slot._id} value={slot.subject}>
-                              {slot.subject} ({slot.timeSlot})
+                            <option key={slot._id} value={slot._id}>
+                              {slot.subject} — {slot.timeSlot}
                             </option>
                           ))
                         ) : (
-                          <option value="">No routine class scheduled on {dayOfWeek}</option>
-                        )
-                      ) : (
-                        <>
-                          {allSemesterSubjects.map((sub) => (
-                            <option key={sub} value={sub}>
-                              {sub}
-                            </option>
-                          ))}
-                          <option value="__custom__">+ Enter Other / Custom Subject...</option>
-                        </>
-                      )}
-                    </select>
+                          <option value="">No class scheduled on {dayOfWeek} (Free Day)</option>
+                        )}
+                      </select>
+                    ) : (
+                      <select
+                        value={proxySubject}
+                        onChange={(e) => setProxySubject(e.target.value)}
+                        className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm min-w-[260px]"
+                      >
+                        {allSemesterSubjects.map((sub) => (
+                          <option key={sub} value={sub}>
+                            {sub}
+                          </option>
+                        ))}
+                        <option value="__custom__">+ Enter Other / Custom Subject...</option>
+                      </select>
+                    )}
                   </div>
 
-                  {selectedSubject === "__custom__" && (
+                  {proxyMode && proxySubject === "__custom__" && (
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">Custom Subject Name</label>
                       <input
@@ -583,7 +693,7 @@ export const TeacherPanel: React.FC = () => {
                       const nextMode = !proxyMode;
                       setProxyMode(nextMode);
                       if (nextMode && allSemesterSubjects.length === 0) {
-                        setSelectedSubject("__custom__");
+                        setProxySubject("__custom__");
                       }
                     }}
                     className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 border transition ${
@@ -697,7 +807,182 @@ export const TeacherPanel: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 2: ATTENDANCE REGISTER AUDIT LOGS */}
+        {/* TAB 2: ONE-TIME MASTER WEEKLY TIMETABLE BUILDER (MONDAY - SATURDAY) */}
+        {activeTab === "routine" && (
+          <div className="space-y-6">
+            {/* Step 1: Subject Pool + Save Button */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    Master Weekly Timetable — {department} (Semester {semester})
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Set Monday–Saturday periods once and click Save. This schedule repeats automatically every week!
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSaveWeeklyMaster}
+                  disabled={savingRoutine}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold shadow-sm w-fit"
+                >
+                  <Save className="w-4 h-4" />
+                  {savingRoutine ? "Saving Timetable..." : "Save Master Weekly Routine"}
+                </button>
+              </div>
+
+              {/* Quick Semester Subject Bank */}
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <label className="block text-xs font-bold uppercase text-slate-500">
+                  Step 1: Add Semester Subjects Once (Then Assign to Any Day/Period Below)
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={newPoolSubject}
+                    onChange={(e) => setNewPoolSubject(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addSubjectToPool();
+                      }
+                    }}
+                    placeholder="Type subject name (e.g. Data Structures, DBMS)..."
+                    className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm w-72"
+                  />
+                  <button
+                    type="button"
+                    onClick={addSubjectToPool}
+                    className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Subject
+                  </button>
+                </div>
+
+                {subjectPool.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {subjectPool.map((sub) => (
+                      <span
+                        key={sub}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200 text-xs font-semibold"
+                      >
+                        {sub}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSubjectPool((prev) => prev.filter((item) => item !== sub))
+                          }
+                          className="hover:text-red-600"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Step 2: 6-Day Weekly Matrix (Monday to Saturday) */}
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {DAYS.map((day) => {
+                const daySlots = weeklyDraft.filter((s) => s.dayOfWeek === day);
+                return (
+                  <div
+                    key={day}
+                    className="bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between overflow-hidden"
+                  >
+                    <div>
+                      <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                        <span className="font-bold text-slate-900 text-sm">{day}</span>
+                        <span className="text-[11px] font-semibold text-slate-500">
+                          {daySlots.length === 0
+                            ? "No Classes"
+                            : `${daySlots.length} Period${daySlots.length > 1 ? "s" : ""}`}
+                        </span>
+                      </div>
+
+                      <div className="p-3 space-y-2.5">
+                        {daySlots.map((slot, idx) => (
+                          <div
+                            key={idx}
+                            className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2"
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <input
+                                type="text"
+                                value={slot.timeSlot}
+                                onChange={(e) =>
+                                  updateDraftSlot(day, idx, "timeSlot", e.target.value)
+                                }
+                                placeholder="e.g. Period 1 (10:00 - 11:00)"
+                                className="flex-1 px-2 py-1 bg-white border border-slate-300 rounded text-xs font-medium text-slate-700"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeDraftSlot(day, idx)}
+                                className="p-1 text-slate-400 hover:text-red-600"
+                                title="Remove period"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+
+                            {subjectPool.length > 0 ? (
+                              <select
+                                value={slot.subject}
+                                onChange={(e) =>
+                                  updateDraftSlot(day, idx, "subject", e.target.value)
+                                }
+                                className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900"
+                              >
+                                <option value="">-- Select Subject --</option>
+                                {subjectPool.map((sub) => (
+                                  <option key={sub} value={sub}>
+                                    {sub}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                value={slot.subject}
+                                onChange={(e) =>
+                                  updateDraftSlot(day, idx, "subject", e.target.value)
+                                }
+                                placeholder="Enter subject name..."
+                                className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold"
+                              />
+                            )}
+                          </div>
+                        ))}
+
+                        {daySlots.length === 0 && (
+                          <p className="py-6 text-center text-xs text-slate-400">
+                            No periods scheduled on {day}.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-3 border-t border-slate-100 bg-slate-50/50">
+                      <button
+                        type="button"
+                        onClick={() => addPeriodToDay(day)}
+                        className="w-full py-1.5 rounded-lg border border-dashed border-blue-300 text-blue-600 hover:bg-blue-50 text-xs font-semibold inline-flex items-center justify-center gap-1 transition"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add Period to {day}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: ATTENDANCE REGISTER AUDIT LOGS */}
         {activeTab === "history" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -730,7 +1015,7 @@ export const TeacherPanel: React.FC = () => {
                   <tr>
                     <th className="py-3 px-4 font-semibold">Date</th>
                     <th className="py-3 px-4 font-semibold">Student</th>
-                    <th className="py-3 px-4 font-semibold">Subject</th>
+                    <th className="py-3 px-4 font-semibold">Subject & Period</th>
                     <th className="py-3 px-4 font-semibold">Status</th>
                   </tr>
                 </thead>
@@ -746,7 +1031,12 @@ export const TeacherPanel: React.FC = () => {
                           ({log.studentId?.rollNumber || "N/A"})
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-slate-700">{log.subject}</td>
+                      <td className="py-3 px-4 text-slate-700">
+                        {log.subject}{" "}
+                        {log.timeSlot && (
+                          <span className="text-xs text-slate-400">({log.timeSlot})</span>
+                        )}
+                      </td>
                       <td className="py-3 px-4">
                         <span
                           className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
@@ -775,75 +1065,6 @@ export const TeacherPanel: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: CONFIGURE SUBJECTS & WEEKLY ROUTINE */}
-        {activeTab === "routine" && (
-          <div className="space-y-6">
-            <form onSubmit={handleAddRoutineSlot} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Plus className="w-4 h-4 text-blue-600" /> Add Subject to {department} — Semester {semester} ({dayOfWeek})
-              </h2>
-              <div className="grid sm:grid-cols-3 gap-3">
-                <input
-                  type="text"
-                  required
-                  value={newSubName}
-                  onChange={(e) => setNewSubName(e.target.value)}
-                  placeholder="Subject Name (e.g. Data Structures)"
-                  className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
-                />
-                <input
-                  type="text"
-                  required
-                  value={newTimeSlot}
-                  onChange={(e) => setNewTimeSlot(e.target.value)}
-                  placeholder="Time Slot (e.g. 10:00 AM - 11:00 AM)"
-                  className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
-                />
-                <button
-                  type="submit"
-                  disabled={addingSlot}
-                  className="py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold shadow-sm"
-                >
-                  {addingSlot ? "Saving..." : "Add to Timetable"}
-                </button>
-              </div>
-            </form>
-
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 text-sm">
-                Configured Timetable — {department} (Semester {semester})
-              </div>
-              <div className="divide-y divide-slate-200">
-                {routineSlots
-                  .filter((r) => r.department === department && r.semester === semester)
-                  .map((slot) => (
-                    <div key={slot._id} className="p-4 flex items-center justify-between text-sm">
-                      <div>
-                        <span className="font-bold text-slate-900">{slot.subject}</span>
-                        <span className="ml-2 px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-semibold">
-                          {slot.dayOfWeek}
-                        </span>
-                        <span className="ml-3 text-xs text-slate-500">{slot.timeSlot}</span>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteRoutineSlot(slot._id)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg"
-                        title="Delete slot"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                {routineSlots.filter((r) => r.department === department && r.semester === semester).length === 0 && (
-                  <p className="p-6 text-center text-xs text-slate-400">
-                    No routine subjects configured yet for {department} Semester {semester}.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* TAB 4: BATCH MARKS ENTRY GRID */}
         {activeTab === "marks" && (
           <form onSubmit={handleBatchMarksSubmit} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -851,32 +1072,21 @@ export const TeacherPanel: React.FC = () => {
               <div className="flex flex-wrap items-end gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-600 mb-1">Subject</label>
-                  {allSemesterSubjects.length > 0 ? (
-                    <select
-                      value={selectedSubject}
-                      onChange={(e) => setSelectedSubject(e.target.value)}
-                      className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm min-w-[200px]"
-                    >
-                      {allSemesterSubjects.map((sub) => (
-                        <option key={sub} value={sub}>
-                          {sub}
-                        </option>
-                      ))}
-                      <option value="__custom__">+ Custom Subject...</option>
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      required
-                      value={customSubject}
-                      onChange={(e) => setCustomSubject(e.target.value)}
-                      placeholder="Enter subject name"
-                      className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
-                    />
-                  )}
+                  <select
+                    value={marksSubject}
+                    onChange={(e) => setMarksSubject(e.target.value)}
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm min-w-[200px]"
+                  >
+                    {allSemesterSubjects.map((sub) => (
+                      <option key={sub} value={sub}>
+                        {sub}
+                      </option>
+                    ))}
+                    <option value="__custom__">+ Custom Subject...</option>
+                  </select>
                 </div>
 
-                {selectedSubject === "__custom__" && (
+                {marksSubject === "__custom__" && (
                   <div>
                     <label className="block text-xs font-bold text-slate-600 mb-1">Custom Subject</label>
                     <input
