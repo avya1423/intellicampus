@@ -3,42 +3,16 @@ import { StudentLayout } from "../components/layouts/StudentLayout";
 import { TeacherLayout } from "../components/layouts/TeacherLayout";
 import { useAuth } from "../auth/AuthContext";
 import api from "../api/axios";
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, Sparkles } from "lucide-react";
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 
 export const AcademicCalendarPage: React.FC = () => {
   const { user } = useAuth();
   const [events, setEvents] = useState<any[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
 
-  // Teacher/Admin add event state
-  const [title, setTitle] = useState("");
-  const [date, setDate] = useState("");
-  const [type, setType] = useState<"Holiday" | "Exam" | "Event">("Holiday");
-  const [description, setDescription] = useState("");
-  const [adding, setAdding] = useState(false);
-
-  const loadEvents = () => {
-    api.get("/calendar").then((res) => setEvents(res.data)).catch(console.error);
-  };
-
   useEffect(() => {
-    loadEvents();
+    api.get("/calendar").then((res) => setEvents(res.data)).catch(console.error);
   }, []);
-
-  const handleAddEvent = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim() || !date) return;
-    setAdding(true);
-    try {
-      await api.post("/calendar", { title, date, type, description });
-      setTitle("");
-      setDate("");
-      setDescription("");
-      loadEvents();
-    } finally {
-      setAdding(false);
-    }
-  };
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -65,7 +39,7 @@ export const AcademicCalendarPage: React.FC = () => {
               <CalendarIcon className="w-6 h-6 text-blue-600" /> Academic Calendar & Holidays
             </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Official university holidays, examination schedules, and campus events
+              Official university holidays, examination dates, and academic events published by Administration
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -87,56 +61,7 @@ export const AcademicCalendarPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Teacher/Admin Add Holiday or Exam Form */}
-        {isStaff && (
-          <form onSubmit={handleAddEvent} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-            <h2 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-              <Plus className="w-4 h-4 text-blue-600" /> Publish Holiday / Exam / Campus Event
-            </h2>
-            <div className="grid sm:grid-cols-4 gap-3">
-              <input
-                type="text"
-                required
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Diwali Break / Midterm Exam"
-                className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
-              />
-              <input
-                type="date"
-                required
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
-              />
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as any)}
-                className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
-              >
-                <option value="Holiday">Holiday</option>
-                <option value="Exam">Exam</option>
-                <option value="Event">Campus Event</option>
-              </select>
-              <button
-                type="submit"
-                disabled={adding}
-                className="py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold shadow-sm"
-              >
-                {adding ? "Adding..." : "Add to Calendar"}
-              </button>
-            </div>
-            <input
-              type="text"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional description or department note..."
-              className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
-            />
-          </form>
-        )}
-
-        {/* Monthly Grid */}
+        {/* Monthly Calendar Grid */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
           <div className="grid grid-cols-7 gap-2 text-center text-xs font-bold text-slate-500 pb-3 border-b border-slate-100">
             {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
@@ -145,7 +70,7 @@ export const AcademicCalendarPage: React.FC = () => {
           </div>
           <div className="grid grid-cols-7 gap-2 mt-3">
             {Array.from({ length: firstDay }).map((_, idx) => (
-              <div key={`empty-${idx}`} className="h-20 rounded-xl bg-slate-50/50" />
+              <div key={`empty-${idx}`} className="h-24 rounded-xl bg-slate-50/50" />
             ))}
             {Array.from({ length: daysInMonth }).map((_, idx) => {
               const day = idx + 1;
@@ -162,11 +87,7 @@ export const AcademicCalendarPage: React.FC = () => {
                       : "bg-white border-slate-200"
                   }`}
                 >
-                  <span
-                    className={`text-xs font-bold ${
-                      isSunday ? "text-rose-600" : "text-slate-700"
-                    }`}
-                  >
+                  <span className={`text-xs font-bold ${isSunday ? "text-rose-600" : "text-slate-700"}`}>
                     {day}
                   </span>
                   <div className="space-y-1 overflow-y-auto">
@@ -192,7 +113,7 @@ export const AcademicCalendarPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Upcoming Events & Holidays List */}
+        {/* Upcoming Holidays & Events List */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 text-sm flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-blue-600" /> Scheduled Holidays, Exams & Events ({events.length})
@@ -228,7 +149,7 @@ export const AcademicCalendarPage: React.FC = () => {
               </div>
             ))}
             {events.length === 0 && (
-              <p className="p-6 text-center text-xs text-slate-400">No holidays or academic events posted yet.</p>
+              <p className="p-6 text-center text-xs text-slate-400">No holidays or academic events published yet.</p>
             )}
           </div>
         </div>
