@@ -5,7 +5,7 @@ import { authorizeRoles } from "../middleware/checkRole";
 
 const router = express.Router();
 
-// Get routine (optional filters: department, semester, dayOfWeek)
+// Get routine
 router.get("/", protect, async (req, res: Response) => {
   try {
     const filter: any = {};
@@ -20,11 +20,21 @@ router.get("/", protect, async (req, res: Response) => {
   }
 });
 
-// Teacher or Admin adds a routine/subject slot
+// Add a routine/subject slot
 router.post("/", protect, authorizeRoles("teacher", "admin"), async (req, res: Response) => {
   try {
     const slot = await Routine.create(req.body);
     res.status(201).json(slot);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Delete a routine/subject slot
+router.delete("/:id", protect, authorizeRoles("teacher", "admin"), async (req, res: Response) => {
+  try {
+    await Routine.findByIdAndDelete(req.params.id);
+    res.json({ message: "Routine slot removed" });
   } catch (error: any) {
     res.status(500).json({ message: error.message });
   }
