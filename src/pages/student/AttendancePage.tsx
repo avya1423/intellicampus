@@ -12,6 +12,12 @@ import {
   BookOpen,
 } from "lucide-react";
 
+interface SubjectStat {
+  subject: string;
+  total: number;
+  present: number;
+}
+
 export const AttendancePage: React.FC = () => {
   const [data, setData] = useState<{ percentage: number; totalClasses: number; records: any[] }>({
     percentage: 0,
@@ -20,7 +26,7 @@ export const AttendancePage: React.FC = () => {
   });
   const [corrections, setCorrections] = useState<any[]>([]);
 
-  // Interactive Target Calculator (60, 70, 75, 80, etc.)
+  // Interactive Target Calculator (60, 70, 75, 80, 85)
   const [targetPct, setTargetPct] = useState<number>(75);
 
   // Filters
@@ -28,7 +34,7 @@ export const AttendancePage: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All");
 
-  // Correction Modal State
+  // Correction Box State
   const [activeRecord, setActiveRecord] = useState<any | null>(null);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -70,21 +76,20 @@ export const AttendancePage: React.FC = () => {
     }
   }
 
-  // Group by Subject
-  const subjectStats = Object.values(
-    data.records.reduce((acc: Record<string, { subject: string; total: number; present: number }>, r) => {
-      if (!acc[r.subject]) {
-        acc[r.subject] = { subject: r.subject, total: 0, present: 0 };
-      }
-      acc[r.subject].total += 1;
-      if (r.status === "Present" || r.status === "Late") {
-        acc[r.subject].present += 1;
-      }
-      return acc;
-    }, {})
-  );
+  // Group by Subject (Explicitly typed for TypeScript build)
+  const subjectMap: Record<string, SubjectStat> = {};
+  data.records.forEach((r) => {
+    if (!subjectMap[r.subject]) {
+      subjectMap[r.subject] = { subject: r.subject, total: 0, present: 0 };
+    }
+    subjectMap[r.subject].total += 1;
+    if (r.status === "Present" || r.status === "Late") {
+      subjectMap[r.subject].present += 1;
+    }
+  });
+  const subjectStats: SubjectStat[] = Object.values(subjectMap);
 
-  const uniqueSubjects = ["All", ...subjectStats.map((s) => s.subject)];
+  const uniqueSubjects: string[] = ["All", ...subjectStats.map((s) => s.subject)];
 
   // Filtered Records
   const filteredRecords = data.records.filter((r) => {
@@ -217,7 +222,7 @@ export const AttendancePage: React.FC = () => {
           </div>
         )}
 
-        {/* Correction Request Box (When Student clicks "Request Correction") */}
+        {/* Correction Request Box */}
         {activeRecord && (
           <form
             onSubmit={handleCorrectionSubmit}
