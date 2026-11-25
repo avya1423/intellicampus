@@ -32,10 +32,10 @@ router.get("/all", protect, authorizeRoles("teacher", "admin"), async (_req, res
   }
 });
 
-// Mark or update attendance for a specific date (prevents duplicates on same date+subject)
+// Mark or update attendance for a specific date & period
 router.post("/mark", protect, authorizeRoles("teacher", "admin"), async (req: AuthRequest, res: Response) => {
   try {
-    const { studentId, subject, status, date } = req.body;
+    const { studentId, subject, status, date, timeSlot } = req.body;
     const targetDate = date ? new Date(date) : new Date();
 
     const startOfDay = new Date(targetDate);
@@ -43,11 +43,16 @@ router.post("/mark", protect, authorizeRoles("teacher", "admin"), async (req: Au
     const endOfDay = new Date(targetDate);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const existing = await Attendance.findOne({
+    const query: any = {
       studentId,
       subject,
       date: { $gte: startOfDay, $lte: endOfDay },
-    });
+    };
+    if (timeSlot) {
+      query.timeSlot = timeSlot;
+    }
+
+    const existing = await Attendance.findOne(query);
 
     if (existing) {
       existing.status = status;
@@ -59,6 +64,7 @@ router.post("/mark", protect, authorizeRoles("teacher", "admin"), async (req: Au
     const record = await Attendance.create({
       studentId,
       subject,
+      timeSlot,
       status,
       date: targetDate,
       markedBy: req.user?.id,
