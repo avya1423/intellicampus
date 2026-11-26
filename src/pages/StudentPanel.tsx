@@ -19,6 +19,11 @@ import {
   CalendarDays,
   ArrowRight,
   UserCircle,
+  Sparkles,
+  Upload,
+  Calculator,
+  HeartPulse,
+  Award,
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
@@ -32,13 +37,28 @@ interface SubjectSummary {
   canSkip: number;
 }
 
-const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEK_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+const ALL_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+const scoreToGradePoint = (totalPct: number): { grade: string; gp: number } => {
+  if (totalPct >= 90) return { grade: "O", gp: 10 };
+  if (totalPct >= 80) return { grade: "A+", gp: 9 };
+  if (totalPct >= 70) return { grade: "A", gp: 8 };
+  if (totalPct >= 60) return { grade: "B+", gp: 7 };
+  if (totalPct >= 50) return { grade: "B", gp: 6 };
+  if (totalPct >= 40) return { grade: "C", gp: 5 };
+  return { grade: "F", gp: 0 };
+};
 
 export const StudentPanel: React.FC = () => {
   const { user } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [riskData, setRiskData] = useState<any>(null);
-  const [attendanceData, setAttendanceData] = useState<{ totalClasses: number; percentage: number; records: any[] }>({
+  const [attendanceData, setAttendanceData] = useState<{
+    totalClasses: number;
+    percentage: number;
+    records: any[];
+  }>({
     totalClasses: 0,
     percentage: 0,
     records: [],
@@ -47,26 +67,57 @@ export const StudentPanel: React.FC = () => {
   const [routineSlots, setRoutineSlots] = useState<any[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [leaves, setLeaves] = useState<any[]>([]);
 
-  // Interactive Attendance Target Goal (60%, 70%, 75%, 80%, 85%)
+  // 1. Attendance Target Goal (60%, 70%, 75%, 80%, 85%)
   const [targetPct, setTargetPct] = useState<number>(75);
 
-  // AI Chatbot state
-  const [chatInput, setChatInput] = useState("");
+  // 2. Full Weekly Timetable Day Selector
+  const todayDayName = ALL_DAYS[new Date().getDay()];
+  const defaultRoutineTab =
+    todayDayName === "Sunday" ? "Monday" : todayDayName;
+  const [selectedRoutineDay, setSelectedRoutineDay] = useState<string>(defaultRoutineTab);
+
+  // 3. SGPA / CGPA Final Exam Simulator State
+  const [prevCgpa, setPrevCgpa] = useState<string>("8.0");
+  const [expectedEndSemMap, setExpectedEndSemMap] = useState<Record<string, number>>({});
+
+  // 4. Assignment Submission Inline State
+  const [submittingAssignmentId, setSubmittingAssignmentId] = useState<string | null>(null);
+  const [submissionLink, setSubmissionLink] = useState<string>("");
+  const [submissionRemarks, setSubmissionRemarks] = useState<string>("");
+  const [assignmentMsg, setAssignmentMsg] = useState<string>("");
+
+  // 5. Medical & Duty Leave Application State
+  const [showLeaveForm, setShowLeaveForm] = useState<boolean>(false);
+  const [leaveType, setLeaveType] = useState<"Medical Leave" | "Duty / Event Leave" | "Personal Leave">(
+    "Medical Leave"
+  );
+  const [fromDate, setFromDate] = useState<string>("");
+  const [toDate, setToDate] = useState<string>("");
+  const [leaveReason, setLeaveReason] = useState<string>("");
+  const [leaveDocLink, setLeaveDocLink] = useState<string>("");
+  const [applyingLeave, setApplyingLeave] = useState<boolean>(false);
+  const [leaveFeedback, setLeaveFeedback] = useState<string>("");
+
+  // 6. Gemini AI Advisor with 1-Click Action Prompts
+  const [chatInput, setChatInput] = useState<string>("");
   const [chatHistory, setChatHistory] = useState<{ sender: "user" | "ai"; text: string }[]>([
     {
       sender: "ai",
-      text: "Hi! I'm your IntelliCampus AI Study Advisor. Ask me how to reach your attendance target or prepare for upcoming exams!",
+      text: "Hi! I'm your IntelliCampus AI Study Advisor. Click any smart prompt below or ask me about your attendance target, SGPA boost, or exam prep!",
     },
   ]);
-  const [sending, setSending] = useState(false);
+  const [sending, setSending] = useState<boolean>(false);
 
-  useEffect(() => {
+  const loadStudentData = () => {
     api.get("/users/profile").then((res) => setProfile(res.data)).catch(console.error);
     api.get("/risk/my").then((res) => setRiskData(res.data)).catch(console.error);
     api.get("/attendance/my").then((res) => setAttendanceData(res.data)).catch(console.error);
     api.get("/marks/my").then((res) => setMarksRecords(res.data.records || [])).catch(console.error);
     api.get("/calendar").then((res) => setCalendarEvents(res.data)).catch(console.error);
+    api.get("/leaves/my").then((res) => setLeaves(res.data)).catch(console.error);
 
     if (user?.department) {
       const dept = encodeURIComponent(user.department);
@@ -79,7 +130,15 @@ export const StudentPanel: React.FC = () => {
         .get(`/notices?department=${dept}&semester=${sem}`)
         .then((res) => setNotices(res.data))
         .catch(console.error);
+      api
+        .get(`/assignments?department=${dept}&semester=${sem}`)
+        .then((res) => setAssignments(res.data))
+        .catch(console.error);
     }
+  };
+
+  useEffect(() => {
+    loadStudentData();
   }, [user?.department, user?.semester]);
 
   // Aggregate Held, Attended, Missed
@@ -89,10 +148,8 @@ export const StudentPanel: React.FC = () => {
   ).length;
   const totalMissed = Math.max(0, totalHeld - totalAttended);
   const currentPct = totalHeld > 0 ? Math.round((totalAttended / totalHeld) * 100) : 0;
-
   const t = Math.min(99, Math.max(1, targetPct)) / 100;
 
-  // Overall Target Calculation
   let overallTargetText =
     "No classes have been held yet this semester. Once faculty marks attendance, your target projection will appear here.";
   let isBelowTarget = false;
@@ -116,7 +173,7 @@ export const StudentPanel: React.FC = () => {
     }
   }
 
-  // Merge all Current Semester Subjects (from Routine + Attendance + Marks)
+  // Merge all Current Semester Subjects
   const allSubjectNamesSet = new Set<string>();
   routineSlots.forEach((s) => allSubjectNamesSet.add(s.subject));
   attendanceData.records.forEach((r) => allSubjectNamesSet.add(r.subject));
@@ -152,11 +209,56 @@ export const StudentPanel: React.FC = () => {
     };
   });
 
-  // Today's Scheduled Classes from Weekly Routine
-  const todayDayName = DAYS[new Date().getDay()];
-  const todaysClasses = routineSlots.filter((r) => r.dayOfWeek === todayDayName);
+  // SGPA / CGPA Simulator Calculations (40% Internal Avg + 60% Expected End-Sem)
+  const sgpaRows = semesterSubjects.map((sub) => {
+    const subMarks = marksRecords.filter((m) => m.subject === sub);
+    const internalAvg =
+      subMarks.length > 0
+        ? Math.round(
+            subMarks.reduce(
+              (acc: number, m: any) => acc + (m.score / (m.maxScore || 100)) * 100,
+              0
+            ) / subMarks.length
+          )
+        : 75;
+    const expectedEndSem =
+      expectedEndSemMap[sub] !== undefined ? expectedEndSemMap[sub] : 75;
+    const projectedTotal = Math.round(internalAvg * 0.4 + expectedEndSem * 0.6);
+    const { grade, gp } = scoreToGradePoint(projectedTotal);
+    return {
+      subject: sub,
+      internalAvg,
+      expectedEndSem,
+      projectedTotal,
+      grade,
+      gp,
+    };
+  });
 
-  // Upcoming Calendar Events (Holidays / Exams)
+  const predictedSgpaNum =
+    sgpaRows.length > 0
+      ? sgpaRows.reduce((sum, r) => sum + r.gp, 0) / sgpaRows.length
+      : 0;
+  const predictedSgpa = sgpaRows.length > 0 ? predictedSgpaNum.toFixed(2) : "0.00";
+  const currentSemNum = user?.semester || 1;
+  const parsedPrevCgpa = Math.min(10, Math.max(0, parseFloat(prevCgpa) || 0));
+  const projectedCgpa =
+    sgpaRows.length > 0
+      ? currentSemNum > 1
+        ? (
+            (parsedPrevCgpa * (currentSemNum - 1) + predictedSgpaNum) /
+            currentSemNum
+          ).toFixed(2)
+        : predictedSgpa
+      : "0.00";
+
+  // Filtered Weekly Timetable Slots
+  const displayedRoutineSlots =
+    selectedRoutineDay === "ALL"
+      ? routineSlots
+      : routineSlots.filter((r) => r.dayOfWeek === selectedRoutineDay);
+
+  // Upcoming Calendar Events
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const upcomingEvents = calendarEvents
@@ -168,24 +270,87 @@ export const StudentPanel: React.FC = () => {
     score: Math.round((m.score / (m.maxScore || 100)) * 100),
   }));
 
-  const handleSend = async (e: React.FormEvent) => {
+  // Assignment Submit Handler
+  const handleAssignmentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
-    const msg = chatInput;
+    if (!submittingAssignmentId || !submissionLink.trim()) return;
+    try {
+      await api.post(`/assignments/${submittingAssignmentId}/submit`, {
+        submissionLink: submissionLink.trim(),
+        remarks: submissionRemarks.trim(),
+      });
+      setAssignmentMsg("Assignment / Lab link submitted successfully!");
+      setSubmittingAssignmentId(null);
+      setSubmissionLink("");
+      setSubmissionRemarks("");
+      loadStudentData();
+    } catch {
+      setAssignmentMsg("Failed to submit assignment. Please verify the URL.");
+    }
+  };
+
+  // Leave Application Handler
+  const handleApplyLeave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fromDate || !toDate || !leaveReason.trim()) return;
+    setApplyingLeave(true);
+    setLeaveFeedback("");
+    try {
+      await api.post("/leaves", {
+        leaveType,
+        fromDate,
+        toDate,
+        reason: leaveReason.trim(),
+        documentLink: leaveDocLink.trim() || undefined,
+      });
+      setLeaveFeedback("Leave application submitted to Faculty & Administration!");
+      setFromDate("");
+      setToDate("");
+      setLeaveReason("");
+      setLeaveDocLink("");
+      setShowLeaveForm(false);
+      loadStudentData();
+    } catch {
+      setLeaveFeedback("Could not submit leave application. Please try again.");
+    } finally {
+      setApplyingLeave(false);
+    }
+  };
+
+  // Gemini AI Advisor Send (Supports both typed text and 1-Click Smart Prompts)
+  const triggerAiPrompt = async (promptText: string) => {
+    if (!promptText.trim() || sending) return;
     setChatInput("");
-    setChatHistory((prev) => [...prev, { sender: "user", text: msg }]);
+    setChatHistory((prev) => [...prev, { sender: "user", text: promptText }]);
     setSending(true);
     try {
-      const context = `Subjects: ${semesterSubjects.length}, Held: ${totalHeld}, Attended: ${totalAttended} (${currentPct}%), Target: ${targetPct}%, Avg Marks: ${
+      const subjectSummaryText = subjectBreakdown
+        .map((s) => `${s.subject}: ${s.percentage}% (${s.attended}/${s.held})`)
+        .join(", ");
+      const context = `Student: ${user?.name}, Dept: ${user?.department}, Sem: ${
+        user?.semester || 1
+      }, Overall Attendance: ${currentPct}% (${totalAttended}/${totalHeld}), Target: ${targetPct}%, Avg Marks: ${
         riskData?.avgMarksPct ?? 0
-      }%`;
-      const { data } = await api.post("/chatbot/ask", { message: msg, context });
+      }%, Predicted SGPA: ${predictedSgpa}. Subjects: ${subjectSummaryText}`;
+
+      const { data } = await api.post("/chatbot/ask", {
+        message: promptText,
+        context,
+      });
       setChatHistory((prev) => [...prev, { sender: "ai", text: data.reply }]);
     } catch {
-      setChatHistory((prev) => [...prev, { sender: "ai", text: "Unable to reach AI advisor right now." }]);
+      setChatHistory((prev) => [
+        ...prev,
+        { sender: "ai", text: "Unable to reach AI advisor right now." },
+      ]);
     } finally {
       setSending(false);
     }
+  };
+
+  const handleChatFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    triggerAiPrompt(chatInput);
   };
 
   return (
@@ -199,13 +364,19 @@ export const StudentPanel: React.FC = () => {
             </p>
             <h1 className="text-2xl font-bold text-slate-900">Welcome, {user?.name}</h1>
             <p className="text-xs sm:text-sm text-slate-500">
-              {profile?.program || "B.Tech"} • {user?.department} ({profile?.section || "Section A"}) •{" "}
-              <strong>Semester {user?.semester || 1}</strong> • Roll No:{" "}
-              <strong>{user?.rollNumber || "N/A"}</strong>
+              {profile?.program || "B.Tech"} • {user?.department} (
+              {profile?.section || "Section A"}) • <strong>Semester {user?.semester || 1}</strong> •
+              Roll No: <strong>{user?.rollNumber || "N/A"}</strong>
               {profile?.enrollmentNumber ? ` • Enrollment: ${profile.enrollmentNumber}` : ""}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to="/student/grade-card"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition"
+            >
+              <Award className="w-4 h-4" /> Grade Card & Bonafide
+            </Link>
             <Link
               to="/student/profile"
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold border border-blue-200 transition"
@@ -216,7 +387,7 @@ export const StudentPanel: React.FC = () => {
               onClick={() => window.print()}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition"
             >
-              <Printer className="w-4 h-4" /> Print Report
+              <Printer className="w-4 h-4" /> Print
             </button>
           </div>
         </div>
@@ -227,7 +398,9 @@ export const StudentPanel: React.FC = () => {
             <p className="text-xs font-semibold text-slate-500 uppercase flex items-center gap-1.5">
               <BookOpen className="w-3.5 h-3.5 text-indigo-600" /> Semester Subjects
             </p>
-            <p className="text-3xl font-extrabold mt-1.5 text-indigo-600">{semesterSubjects.length}</p>
+            <p className="text-3xl font-extrabold mt-1.5 text-indigo-600">
+              {semesterSubjects.length}
+            </p>
             <p className="text-xs text-slate-500 mt-1">Active in Semester {user?.semester || 1}</p>
           </div>
 
@@ -348,7 +521,8 @@ export const StudentPanel: React.FC = () => {
                         <span className="text-slate-400">—</span>
                       ) : sub.neededForTarget > 0 ? (
                         <span className="font-bold text-amber-700">
-                          Attend next {sub.neededForTarget} class{sub.neededForTarget > 1 ? "es" : ""}
+                          Attend next {sub.neededForTarget} class
+                          {sub.neededForTarget > 1 ? "es" : ""}
                         </span>
                       ) : (
                         <span className="font-semibold text-emerald-700">
@@ -370,7 +544,9 @@ export const StudentPanel: React.FC = () => {
           </div>
 
           <div className="px-5 py-3 bg-slate-50/60 border-t border-slate-200 flex justify-between items-center text-xs">
-            <span className="text-slate-500">Marked absent by mistake? Request a correction in Attendance Log.</span>
+            <span className="text-slate-500">
+              Marked absent by mistake? Request a correction in Attendance Log.
+            </span>
             <Link
               to="/student/attendance"
               className="font-bold text-blue-600 hover:underline inline-flex items-center gap-1"
@@ -380,35 +556,411 @@ export const StudentPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Today's Class Schedule + Upcoming Exams & Holidays */}
-        <div className="grid md:grid-cols-2 gap-6">
-          {/* Today's Timetable */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
-              <span className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <Clock className="w-4 h-4 text-blue-600" /> Today's Schedule ({todayDayName})
-              </span>
-              <span className="text-xs font-semibold text-slate-500">
-                {todaysClasses.length} Lecture{todaysClasses.length !== 1 ? "s" : ""}
-              </span>
+        {/* FULL MONDAY–SATURDAY WEEKLY TIMETABLE CARD */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div>
+              <h2 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                <Clock className="w-4 h-4 text-blue-600" /> Master Weekly Class Timetable
+              </h2>
+              <p className="text-xs text-slate-500">
+                Complete Monday–Saturday schedule for {user?.department} Semester {user?.semester || 1}
+              </p>
             </div>
-            <div className="divide-y divide-slate-200">
-              {todaysClasses.map((slot) => (
-                <div key={slot._id} className="p-4 flex items-center justify-between text-sm">
+            <div className="flex flex-wrap items-center gap-1">
+              {WEEK_DAYS.map((day) => (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => setSelectedRoutineDay(day)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    selectedRoutineDay === day
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  {day.slice(0, 3)}
+                  {day === todayDayName ? " (Today)" : ""}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setSelectedRoutineDay("ALL")}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  selectedRoutineDay === "ALL"
+                    ? "bg-slate-900 text-white"
+                    : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                Full Week
+              </button>
+            </div>
+          </div>
+
+          <div className="divide-y divide-slate-200">
+            {displayedRoutineSlots.map((slot) => (
+              <div
+                key={slot._id}
+                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-sm"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-bold min-w-[90px] text-center">
+                    {slot.dayOfWeek}
+                  </span>
                   <div>
                     <p className="font-bold text-slate-900">{slot.subject}</p>
                     {slot.teacherName && (
                       <p className="text-xs text-slate-500">Faculty: {slot.teacherName}</p>
                     )}
                   </div>
-                  <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold">
-                    {slot.timeSlot}
+                </div>
+                <span className="px-3 py-1 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold w-fit">
+                  {slot.timeSlot}
+                </span>
+              </div>
+            ))}
+            {displayedRoutineSlots.length === 0 && (
+              <p className="p-8 text-center text-xs text-slate-400">
+                No lectures scheduled for{" "}
+                {selectedRoutineDay === "ALL" ? "this week" : selectedRoutineDay}.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* SGPA / CGPA PREDICTOR & FINAL EXAM SIMULATOR */}
+        {sgpaRows.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-slate-200 bg-slate-50/70 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Calculator className="w-5 h-5 text-indigo-600" /> SGPA / CGPA Predictor & Final Exam Simulator
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Adjust expected End-Sem scores (60% weightage) alongside your actual internal marks (40% weightage)
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1.5 bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-xs">
+                  <span className="font-semibold text-slate-600">Previous CGPA:</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    max={10}
+                    value={prevCgpa}
+                    onChange={(e) => setPrevCgpa(e.target.value)}
+                    className="w-14 font-bold text-slate-900 border-b border-slate-300 focus:outline-none text-center"
+                  />
+                </div>
+                <div className="px-3.5 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold">
+                  Predicted SGPA: {predictedSgpa}
+                </div>
+                <div className="px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold">
+                  Projected CGPA: {projectedCgpa}
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                  <tr>
+                    <th className="py-3 px-4 font-semibold">Subject</th>
+                    <th className="py-3 px-4 font-semibold">Internal Avg (40%)</th>
+                    <th className="py-3 px-4 font-semibold">Target End-Sem Score (60%)</th>
+                    <th className="py-3 px-4 font-semibold">Projected Total</th>
+                    <th className="py-3 px-4 font-semibold">Expected Grade</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {sgpaRows.map((row) => (
+                    <tr key={row.subject} className="hover:bg-slate-50/60">
+                      <td className="py-3 px-4 font-semibold text-slate-900">{row.subject}</td>
+                      <td className="py-3 px-4 text-slate-700">{row.internalAvg}%</td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={row.expectedEndSem}
+                            onChange={(e) =>
+                              setExpectedEndSemMap((prev) => ({
+                                ...prev,
+                                [row.subject]: Number(e.target.value),
+                              }))
+                            }
+                            className="w-28 accent-indigo-600"
+                          />
+                          <span className="text-xs font-bold text-indigo-700 w-10">
+                            {row.expectedEndSem}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-bold text-slate-900">{row.projectedTotal}%</td>
+                      <td className="py-3 px-4">
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          {row.grade} ({row.gp} GP)
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ASSIGNMENT & LAB SUBMISSION TRACKER */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+            <div>
+              <h2 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                <Upload className="w-4 h-4 text-blue-600" /> Assignments & Lab Submission Tracker
+              </h2>
+              <p className="text-xs text-slate-500">
+                Track deadlines and submit Google Drive / GitHub links directly to faculty
+              </p>
+            </div>
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+              {assignments.length} Active
+            </span>
+          </div>
+
+          {assignmentMsg && (
+            <div className="mx-4 mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+              {assignmentMsg}
+            </div>
+          )}
+
+          <div className="divide-y divide-slate-200">
+            {assignments.map((task) => {
+              const mySub = (task.submissions || []).find(
+                (s: any) => s.studentId === user?.id
+              );
+              const dueTime = new Date(task.dueDate).getTime();
+              const diffDays = Math.ceil((dueTime - todayStart.getTime()) / (1000 * 60 * 60 * 24));
+              const isOverdue = diffDays < 0 && !mySub;
+
+              return (
+                <div key={task._id} className="p-4 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-slate-900 text-sm">{task.title}</span>
+                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px] font-semibold">
+                          {task.subject} • {task.type}
+                        </span>
+                        {mySub ? (
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
+                            Submitted
+                          </span>
+                        ) : (
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              isOverdue
+                                ? "bg-red-50 text-red-700 border border-red-200"
+                                : "bg-amber-50 text-amber-800 border border-amber-200"
+                            }`}
+                          >
+                            {isOverdue
+                              ? "Overdue"
+                              : diffDays === 0
+                              ? "Due Today"
+                              : `Due in ${diffDays}d`}
+                          </span>
+                        )}
+                      </div>
+                      {task.instructions && (
+                        <p className="text-xs text-slate-600">{task.instructions}</p>
+                      )}
+                      <p className="text-[11px] text-slate-400">
+                        Deadline: {new Date(task.dueDate).toLocaleDateString("en-IN")} • Assigned by{" "}
+                        {task.createdBy}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {mySub && (
+                        <a
+                          href={mySub.submissionLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" /> View Link
+                        </a>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSubmittingAssignmentId(task._id);
+                          setSubmissionLink(mySub?.submissionLink || "");
+                          setSubmissionRemarks(mySub?.remarks || "");
+                        }}
+                        className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm"
+                      >
+                        {mySub ? "Update Submission" : "Submit Work"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {submittingAssignmentId === task._id && (
+                    <form
+                      onSubmit={handleAssignmentSubmit}
+                      className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-200 flex flex-col sm:flex-row gap-2"
+                    >
+                      <input
+                        type="url"
+                        required
+                        value={submissionLink}
+                        onChange={(e) => setSubmissionLink(e.target.value)}
+                        placeholder="Paste Google Drive / GitHub Repo URL..."
+                        className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={submissionRemarks}
+                        onChange={(e) => setSubmissionRemarks(e.target.value)}
+                        placeholder="Optional note..."
+                        className="sm:w-48 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                      />
+                      <button
+                        type="submit"
+                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold"
+                      >
+                        Confirm Submit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSubmittingAssignmentId(null)}
+                        className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800"
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  )}
+                </div>
+              );
+            })}
+            {assignments.length === 0 && (
+              <p className="p-8 text-center text-xs text-slate-400">
+                No pending assignments or lab records posted for your semester yet.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* MEDICAL & DUTY LEAVE APPLICATION PORTAL + UPCOMING HOLIDAYS */}
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* Medical & Duty Leave Portal */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
+              <span className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                <HeartPulse className="w-4 h-4 text-rose-600" /> Medical & Duty Leave Portal
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowLeaveForm(!showLeaveForm)}
+                className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold"
+              >
+                {showLeaveForm ? "Close Form" : "+ Apply Leave"}
+              </button>
+            </div>
+
+            {leaveFeedback && (
+              <div className="m-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+                {leaveFeedback}
+              </div>
+            )}
+
+            {showLeaveForm && (
+              <form
+                onSubmit={handleApplyLeave}
+                className="p-4 border-b border-slate-200 bg-slate-50/40 space-y-3"
+              >
+                <div className="grid grid-cols-3 gap-2">
+                  <select
+                    value={leaveType}
+                    onChange={(e) => setLeaveType(e.target.value as any)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-medium"
+                  >
+                    <option value="Medical Leave">Medical Leave</option>
+                    <option value="Duty / Event Leave">Duty / Event Leave</option>
+                    <option value="Personal Leave">Personal Leave</option>
+                  </select>
+                  <input
+                    type="date"
+                    required
+                    value={fromDate}
+                    onChange={(e) => setFromDate(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                  />
+                  <input
+                    type="date"
+                    required
+                    value={toDate}
+                    onChange={(e) => setToDate(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                  />
+                </div>
+                <input
+                  type="text"
+                  required
+                  value={leaveReason}
+                  onChange={(e) => setLeaveReason(e.target.value)}
+                  placeholder="Reason (e.g. Viral fever / Inter-college Hackathon participation)..."
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                />
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={leaveDocLink}
+                    onChange={(e) => setLeaveDocLink(e.target.value)}
+                    placeholder="Optional Medical Certificate / Event Pass Drive Link"
+                    className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                  />
+                  <button
+                    type="submit"
+                    disabled={applyingLeave}
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold"
+                  >
+                    {applyingLeave ? "Sending..." : "Submit Leave"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div className="divide-y divide-slate-200 max-h-64 overflow-y-auto">
+              {leaves.map((lv) => (
+                <div key={lv._id} className="p-4 flex items-center justify-between gap-2 text-xs">
+                  <div>
+                    <p className="font-bold text-slate-900">
+                      {lv.leaveType}{" "}
+                      <span className="font-normal text-slate-500">
+                        ({new Date(lv.fromDate).toLocaleDateString("en-IN")} –{" "}
+                        {new Date(lv.toDate).toLocaleDateString("en-IN")})
+                      </span>
+                    </p>
+                    <p className="text-slate-600 mt-0.5">{lv.reason}</p>
+                  </div>
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full font-bold shrink-0 ${
+                      lv.status === "Approved"
+                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        : lv.status === "Rejected"
+                        ? "bg-red-50 text-red-700 border border-red-200"
+                        : "bg-amber-50 text-amber-700 border border-amber-200"
+                    }`}
+                  >
+                    {lv.status}
                   </span>
                 </div>
               ))}
-              {todaysClasses.length === 0 && (
+              {leaves.length === 0 && (
                 <p className="p-8 text-center text-xs text-slate-400">
-                  No routine lectures scheduled for {todayDayName}.
+                  No leave applications submitted yet. Click "+ Apply Leave" above to submit one.
                 </p>
               )}
             </div>
@@ -420,7 +972,10 @@ export const StudentPanel: React.FC = () => {
               <span className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <CalendarDays className="w-4 h-4 text-rose-600" /> Upcoming Holidays & Exams
               </span>
-              <Link to="/student/calendar" className="text-xs font-semibold text-blue-600 hover:underline">
+              <Link
+                to="/student/calendar"
+                className="text-xs font-semibold text-blue-600 hover:underline"
+              >
                 Full Calendar
               </Link>
             </div>
@@ -430,7 +985,10 @@ export const StudentPanel: React.FC = () => {
                   (new Date(ev.date).getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24)
                 );
                 return (
-                  <div key={ev._id} className="p-4 flex items-center justify-between gap-2 text-sm">
+                  <div
+                    key={ev._id}
+                    className="p-4 flex items-center justify-between gap-2 text-sm"
+                  >
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-slate-900">{ev.title}</span>
@@ -522,16 +1080,42 @@ export const StudentPanel: React.FC = () => {
           </div>
         )}
 
-        {/* Gemini AI Academic Advisor */}
+        {/* Gemini AI Academic Advisor with 1-Click Smart Action Chips */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center gap-2 font-semibold text-slate-800">
-            <Bot className="w-5 h-5 text-blue-600" /> Gemini AI Academic Advisor
+          <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span className="font-semibold text-slate-800 flex items-center gap-2">
+              <Bot className="w-5 h-5 text-blue-600" /> Gemini AI Academic Advisor
+            </span>
+            <span className="text-[11px] font-semibold text-blue-600 flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5" /> Context-Aware Study Coach
+            </span>
           </div>
+
+          {/* 1-Click Smart Action Buttons */}
+          <div className="px-4 py-2.5 bg-blue-50/40 border-b border-slate-200 flex flex-wrap gap-2">
+            {[
+              "Analyze my weakest subject and how to improve",
+              "Create a 7-day exam revision plan for my subjects",
+              "How do I safely reach my attendance target?",
+              "Tips to boost my SGPA above 8.5 this semester",
+            ].map((quickPrompt) => (
+              <button
+                key={quickPrompt}
+                type="button"
+                disabled={sending}
+                onClick={() => triggerAiPrompt(quickPrompt)}
+                className="px-3 py-1 rounded-full bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 text-xs font-medium transition shadow-2xs"
+              >
+                {quickPrompt}
+              </button>
+            ))}
+          </div>
+
           <div className="p-4 h-72 overflow-y-auto space-y-3 bg-white">
             {chatHistory.map((m, idx) => (
               <div
                 key={idx}
-                className={`max-w-xl px-4 py-2.5 rounded-xl text-sm leading-relaxed ${
+                className={`max-w-xl px-4 py-2.5 rounded-xl text-sm leading-relaxed whitespace-pre-line ${
                   m.sender === "user"
                     ? "bg-blue-600 text-white ml-auto"
                     : "bg-slate-100 text-slate-800 border border-slate-200/60"
@@ -540,9 +1124,12 @@ export const StudentPanel: React.FC = () => {
                 {m.text}
               </div>
             ))}
-            {sending && <p className="text-xs text-slate-400">AI is thinking...</p>}
+            {sending && <p className="text-xs text-slate-400">AI is analyzing your academic data...</p>}
           </div>
-          <form onSubmit={handleSend} className="p-3 border-t border-slate-200 bg-slate-50/50 flex gap-2">
+          <form
+            onSubmit={handleChatFormSubmit}
+            className="p-3 border-t border-slate-200 bg-slate-50/50 flex gap-2"
+          >
             <input
               type="text"
               value={chatInput}
