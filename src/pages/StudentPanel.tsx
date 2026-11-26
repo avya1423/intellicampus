@@ -24,6 +24,8 @@ import {
   Calculator,
   HeartPulse,
   Award,
+  Radio,
+  Ticket,
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
@@ -70,13 +72,20 @@ export const StudentPanel: React.FC = () => {
   const [assignments, setAssignments] = useState<any[]>([]);
   const [leaves, setLeaves] = useState<any[]>([]);
 
+  // Live Classroom OTP Check-in State
+  const [activeSessions, setActiveSessions] = useState<any[]>([]);
+  const [otpCode, setOtpCode] = useState<string>("");
+  const [checkingIn, setCheckingIn] = useState<boolean>(false);
+  const [otpFeedback, setOtpFeedback] = useState<{ type: "success" | "error"; text: string } | null>(
+    null
+  );
+
   // 1. Attendance Target Goal (60%, 70%, 75%, 80%, 85%)
   const [targetPct, setTargetPct] = useState<number>(75);
 
   // 2. Full Weekly Timetable Day Selector
   const todayDayName = ALL_DAYS[new Date().getDay()];
-  const defaultRoutineTab =
-    todayDayName === "Sunday" ? "Monday" : todayDayName;
+  const defaultRoutineTab = todayDayName === "Sunday" ? "Monday" : todayDayName;
   const [selectedRoutineDay, setSelectedRoutineDay] = useState<string>(defaultRoutineTab);
 
   // 3. SGPA / CGPA Final Exam Simulator State
@@ -91,9 +100,9 @@ export const StudentPanel: React.FC = () => {
 
   // 5. Medical & Duty Leave Application State
   const [showLeaveForm, setShowLeaveForm] = useState<boolean>(false);
-  const [leaveType, setLeaveType] = useState<"Medical Leave" | "Duty / Event Leave" | "Personal Leave">(
-    "Medical Leave"
-  );
+  const [leaveType, setLeaveType] = useState<
+    "Medical Leave" | "Duty / Event Leave" | "Personal Leave"
+  >("Medical Leave");
   const [fromDate, setFromDate] = useState<string>("");
   const [toDate, setToDate] = useState<string>("");
   const [leaveReason, setLeaveReason] = useState<string>("");
@@ -118,6 +127,7 @@ export const StudentPanel: React.FC = () => {
     api.get("/marks/my").then((res) => setMarksRecords(res.data.records || [])).catch(console.error);
     api.get("/calendar").then((res) => setCalendarEvents(res.data)).catch(console.error);
     api.get("/leaves/my").then((res) => setLeaves(res.data)).catch(console.error);
+    api.get("/sessions/active").then((res) => setActiveSessions(res.data || [])).catch(console.error);
 
     if (user?.department) {
       const dept = encodeURIComponent(user.department);
@@ -140,6 +150,27 @@ export const StudentPanel: React.FC = () => {
   useEffect(() => {
     loadStudentData();
   }, [user?.department, user?.semester]);
+
+  // Live Classroom OTP Check-in Submit
+  const handleOtpCheckIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpCode.trim()) return;
+    setCheckingIn(true);
+    setOtpFeedback(null);
+    try {
+      const { data } = await api.post("/sessions/checkin", { code: otpCode.trim() });
+      setOtpFeedback({ type: "success", text: data.message });
+      setOtpCode("");
+      loadStudentData();
+    } catch (err: any) {
+      setOtpFeedback({
+        type: "error",
+        text: err.response?.data?.message || "Invalid or expired classroom code.",
+      });
+    } finally {
+      setCheckingIn(false);
+    }
+  };
 
   // Aggregate Held, Attended, Missed
   const totalHeld = attendanceData.totalClasses || 0;
@@ -221,8 +252,7 @@ export const StudentPanel: React.FC = () => {
             ) / subMarks.length
           )
         : 75;
-    const expectedEndSem =
-      expectedEndSemMap[sub] !== undefined ? expectedEndSemMap[sub] : 75;
+    const expectedEndSem = expectedEndSemMap[sub] !== undefined ? expectedEndSemMap[sub] : 75;
     const projectedTotal = Math.round(internalAvg * 0.4 + expectedEndSem * 0.6);
     const { grade, gp } = scoreToGradePoint(projectedTotal);
     return {
@@ -236,19 +266,14 @@ export const StudentPanel: React.FC = () => {
   });
 
   const predictedSgpaNum =
-    sgpaRows.length > 0
-      ? sgpaRows.reduce((sum, r) => sum + r.gp, 0) / sgpaRows.length
-      : 0;
+    sgpaRows.length > 0 ? sgpaRows.reduce((sum, r) => sum + r.gp, 0) / sgpaRows.length : 0;
   const predictedSgpa = sgpaRows.length > 0 ? predictedSgpaNum.toFixed(2) : "0.00";
   const currentSemNum = user?.semester || 1;
   const parsedPrevCgpa = Math.min(10, Math.max(0, parseFloat(prevCgpa) || 0));
   const projectedCgpa =
     sgpaRows.length > 0
       ? currentSemNum > 1
-        ? (
-            (parsedPrevCgpa * (currentSemNum - 1) + predictedSgpaNum) /
-            currentSemNum
-          ).toFixed(2)
+        ? ((parsedPrevCgpa * (currentSemNum - 1) + predictedSgpaNum) / currentSemNum).toFixed(2)
         : predictedSgpa
       : "0.00";
 
@@ -317,7 +342,7 @@ export const StudentPanel: React.FC = () => {
     }
   };
 
-  // Gemini AI Advisor Send (Supports both typed text and 1-Click Smart Prompts)
+  // Gemini AI Advisor Send
   const triggerAiPrompt = async (promptText: string) => {
     if (!promptText.trim() || sending) return;
     setChatInput("");
@@ -372,6 +397,12 @@ export const StudentPanel: React.FC = () => {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
+              to="/student/admit-card"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition"
+            >
+              <Ticket className="w-4 h-4" /> Exam Admit Card
+            </Link>
+            <Link
               to="/student/grade-card"
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition"
             >
@@ -381,7 +412,7 @@ export const StudentPanel: React.FC = () => {
               to="/student/profile"
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold border border-blue-200 transition"
             >
-              <UserCircle className="w-4 h-4" /> College ID & Profile
+              <UserCircle className="w-4 h-4" /> College ID
             </Link>
             <button
               onClick={() => window.print()}
@@ -390,6 +421,72 @@ export const StudentPanel: React.FC = () => {
               <Printer className="w-4 h-4" /> Print
             </button>
           </div>
+        </div>
+
+        {/* LIVE CLASSROOM QR / 4-DIGIT OTP ATTENDANCE CHECK-IN CARD */}
+        <div
+          className={`rounded-2xl border p-5 shadow-sm transition ${
+            activeSessions.length > 0
+              ? "bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-300"
+              : "bg-white border-slate-200"
+          }`}
+        >
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase ${
+                    activeSessions.length > 0
+                      ? "bg-emerald-600 text-white"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  <Radio className="w-3.5 h-3.5" />
+                  {activeSessions.length > 0 ? "Live Class Session Open" : "Live Classroom Check-In"}
+                </span>
+                {activeSessions.length > 0 && (
+                  <span className="text-xs font-bold text-blue-800">
+                    {activeSessions[0].subject} ({activeSessions[0].teacherName})
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-600">
+                {activeSessions.length > 0
+                  ? `Your teacher has opened live attendance for ${activeSessions[0].subject}. Enter the 4-digit classroom code displayed on the projector!`
+                  : "When your faculty starts a live QR/OTP attendance session in class, enter the 4-digit code here to mark yourself Present instantly."}
+              </p>
+            </div>
+
+            <form onSubmit={handleOtpCheckIn} className="flex items-center gap-2">
+              <input
+                type="text"
+                maxLength={4}
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
+                placeholder="4-Digit OTP"
+                className="w-36 px-3.5 py-2 bg-white border border-slate-300 rounded-xl text-center font-mono text-base font-extrabold tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+              <button
+                type="submit"
+                disabled={checkingIn || otpCode.length < 4}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-sm transition whitespace-nowrap"
+              >
+                {checkingIn ? "Verifying..." : "Mark Present"}
+              </button>
+            </form>
+          </div>
+
+          {otpFeedback && (
+            <div
+              className={`mt-3 p-3 rounded-xl text-xs font-semibold ${
+                otpFeedback.type === "success"
+                  ? "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                  : "bg-red-100 text-red-900 border border-red-300"
+              }`}
+            >
+              {otpFeedback.text}
+            </div>
+          )}
         </div>
 
         {/* 4 Core Semester Telemetry KPI Cards */}
@@ -736,9 +833,7 @@ export const StudentPanel: React.FC = () => {
 
           <div className="divide-y divide-slate-200">
             {assignments.map((task) => {
-              const mySub = (task.submissions || []).find(
-                (s: any) => s.studentId === user?.id
-              );
+              const mySub = (task.submissions || []).find((s: any) => s.studentId === user?.id);
               const dueTime = new Date(task.dueDate).getTime();
               const diffDays = Math.ceil((dueTime - todayStart.getTime()) / (1000 * 60 * 60 * 24));
               const isOverdue = diffDays < 0 && !mySub;
