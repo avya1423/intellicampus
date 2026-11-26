@@ -24,6 +24,9 @@ import {
   RefreshCw,
   HeartPulse,
   MessageSquareWarning,
+  Ticket,
+  Unlock,
+  Lock,
 } from "lucide-react";
 
 const DEPARTMENTS = [
@@ -37,9 +40,9 @@ const DEPARTMENTS = [
 
 export const AdminPanel: React.FC = () => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<"directory" | "approvals" | "calendar" | "bulk">(
-    "directory"
-  );
+  const [activeTab, setActiveTab] = useState<
+    "directory" | "approvals" | "exams" | "calendar" | "bulk"
+  >("directory");
 
   const [stats, setStats] = useState<any>({
     totalStudents: 0,
@@ -55,6 +58,24 @@ export const AdminPanel: React.FC = () => {
   const [corrections, setCorrections] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
+  const [examSchedule, setExamSchedule] = useState<any[]>([]);
+  const [condonations, setCondonations] = useState<any[]>([]);
+
+  // Exam Date Sheet Publisher State
+  const [examSessionName, setExamSessionName] = useState("End-Semester Examinations 2026");
+  const [examDept, setExamDept] = useState("Computer Science");
+  const [examSem, setExamSem] = useState<number>(1);
+  const [examSubCode, setExamSubCode] = useState("");
+  const [examSubject, setExamSubject] = useState("");
+  const [examDate, setExamDate] = useState("");
+  const [examShift, setExamShift] = useState("10:00 AM - 01:00 PM");
+  const [examRoom, setExamRoom] = useState("Exam Hall A - Block 1");
+  const [addingExam, setAddingExam] = useState(false);
+
+  // 75% Attendance Condonation Grant State
+  const [condoneStudentId, setCondoneStudentId] = useState("");
+  const [condoneReason, setCondoneReason] = useState("");
+  const [grantingCondone, setGrantingCondone] = useState(false);
 
   // Directory Filters
   const [search, setSearch] = useState("");
@@ -74,7 +95,7 @@ export const AdminPanel: React.FC = () => {
   const [newPasswordInput, setNewPasswordInput] = useState("");
   const [resettingPwd, setResettingPwd] = useState(false);
 
-  // Create New User Form State (Bulk / Quick Create)
+  // Create New User Form State
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -116,6 +137,8 @@ export const AdminPanel: React.FC = () => {
     api.get("/corrections/teacher").then((res) => setCorrections(res.data)).catch(console.error);
     api.get("/calendar").then((res) => setEvents(res.data)).catch(console.error);
     api.get("/notices").then((res) => setNotices(res.data)).catch(console.error);
+    api.get("/exams/schedule").then((res) => setExamSchedule(res.data || [])).catch(console.error);
+    api.get("/exams/condonations").then((res) => setCondonations(res.data || [])).catch(console.error);
   };
 
   useEffect(() => {
@@ -124,6 +147,65 @@ export const AdminPanel: React.FC = () => {
 
   const getStudentTelemetry = (studentId: string) => {
     return riskList.find((r) => r.student?._id === studentId);
+  };
+
+  // Exam Date Sheet Handlers
+  const handleAddExamPaper = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!examSubCode.trim() || !examSubject.trim() || !examDate) return;
+    setAddingExam(true);
+    setBannerMsg("");
+    try {
+      await api.post("/exams/schedule", {
+        examSession: examSessionName.trim(),
+        department: examDept,
+        semester: examSem,
+        subjectCode: examSubCode.trim().toUpperCase(),
+        subject: examSubject.trim(),
+        examDate,
+        shiftTime: examShift,
+        roomNumber: examRoom,
+      });
+      setExamSubCode("");
+      setExamSubject("");
+      setBannerMsg(
+        `Exam paper (${examSubject}) added to ${examDept} Semester ${examSem} Hall Ticket!`
+      );
+      loadAllData();
+    } finally {
+      setAddingExam(false);
+    }
+  };
+
+  const handleDeleteExamPaper = async (id: string) => {
+    await api.delete(`/exams/schedule/${id}`);
+    loadAllData();
+  };
+
+  // 75% Attendance Condonation Handlers
+  const handleGrantCondonation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!condoneStudentId) return;
+    setGrantingCondone(true);
+    setBannerMsg("");
+    try {
+      await api.post("/exams/condonations", {
+        studentId: condoneStudentId,
+        reason: condoneReason.trim() || "Medical / Special Dean Condonation Approved",
+      });
+      setCondoneStudentId("");
+      setCondoneReason("");
+      setBannerMsg("75% Attendance Condonation granted! Student's Exam Admit Card is now unlocked.");
+      loadAllData();
+    } finally {
+      setGrantingCondone(false);
+    }
+  };
+
+  const handleRevokeCondonation = async (studentId: string) => {
+    await api.delete(`/exams/condonations/${studentId}`);
+    setBannerMsg("Attendance condonation revoked.");
+    loadAllData();
   };
 
   // Full User Edit Save
@@ -332,6 +414,8 @@ export const AdminPanel: React.FC = () => {
     Number(stats.pendingRequests || 0) +
     pendingLeaves.length +
     pendingCorrections.length;
+
+  const shortAttendanceStudents = riskList.filter((r) => r.attendancePct < 75);
 
   const filteredUsers = users.filter((u) => {
     const statusLabel = u.approvalStatus || (u.isApproved === false ? "Pending" : "Approved");
@@ -740,6 +824,16 @@ export const AdminPanel: React.FC = () => {
               )}
             </button>
             <button
+              onClick={() => setActiveTab("exams")}
+              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                activeTab === "exams"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Ticket className="w-4 h-4" /> Exams & Admit Cards
+            </button>
+            <button
               onClick={() => setActiveTab("calendar")}
               className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 activeTab === "calendar"
@@ -747,7 +841,7 @@ export const AdminPanel: React.FC = () => {
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              <CalendarPlus className="w-4 h-4" /> Calendar & Official Notices
+              <CalendarPlus className="w-4 h-4" /> Calendar & Notices
             </button>
             <button
               onClick={() => setActiveTab("bulk")}
@@ -757,7 +851,7 @@ export const AdminPanel: React.FC = () => {
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              <ArrowUpRight className="w-4 h-4" /> Create Account & Semester Promotion
+              <ArrowUpRight className="w-4 h-4" /> Create & Promote
             </button>
           </div>
         </div>
@@ -1147,7 +1241,6 @@ export const AdminPanel: React.FC = () => {
 
             {/* 3. Admin Override: Student Medical & Duty Leaves + Attendance Corrections */}
             <div className="grid md:grid-cols-2 gap-6">
-              {/* Pending Leaves */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 text-sm flex items-center gap-2">
                   <HeartPulse className="w-4 h-4 text-rose-600" /> Student Leave Requests Override (
@@ -1190,7 +1283,6 @@ export const AdminPanel: React.FC = () => {
                 </div>
               </div>
 
-              {/* Pending Attendance Corrections */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 text-sm flex items-center gap-2">
                   <MessageSquareWarning className="w-4 h-4 text-amber-600" /> Attendance Corrections
@@ -1235,10 +1327,245 @@ export const AdminPanel: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: CALENDAR & OFFICIAL NOTICES */}
+        {/* TAB 3: EXAM DATE SHEET & 75% ATTENDANCE CONDONATION MANAGER */}
+        {activeTab === "exams" && (
+          <div className="space-y-6">
+            {/* 1. Exam Date Sheet & Hall Ticket Publisher */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 flex items-center gap-2">
+                <Ticket className="w-4 h-4 text-blue-600" /> Examination Date Sheet & Hall Ticket
+                Publisher
+              </div>
+              <form onSubmit={handleAddExamPaper} className="p-5 border-b border-slate-200 space-y-3">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <input
+                    type="text"
+                    required
+                    value={examSessionName}
+                    onChange={(e) => setExamSessionName(e.target.value)}
+                    placeholder="Exam Session Title"
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                  />
+                  <select
+                    value={examDept}
+                    onChange={(e) => setExamDept(e.target.value)}
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                  >
+                    {DEPARTMENTS.filter((d) => d !== "Administration").map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={examSem}
+                    onChange={(e) => setExamSem(Number(e.target.value))}
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                      <option key={s} value={s}>
+                        Semester {s}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    required
+                    value={examSubCode}
+                    onChange={(e) => setExamSubCode(e.target.value)}
+                    placeholder="Subject Code (e.g. CS-301)"
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm font-mono"
+                  />
+                </div>
+
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <input
+                    type="text"
+                    required
+                    value={examSubject}
+                    onChange={(e) => setExamSubject(e.target.value)}
+                    placeholder="Subject Name (e.g. Data Structures)"
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                  />
+                  <input
+                    type="date"
+                    required
+                    value={examDate}
+                    onChange={(e) => setExamDate(e.target.value)}
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                  />
+                  <input
+                    type="text"
+                    required
+                    value={examShift}
+                    onChange={(e) => setExamShift(e.target.value)}
+                    placeholder="Shift Time (e.g. 10:00 AM - 01:00 PM)"
+                    className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      required
+                      value={examRoom}
+                      onChange={(e) => setExamRoom(e.target.value)}
+                      placeholder="Room / Hall No"
+                      className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                    />
+                    <button
+                      type="submit"
+                      disabled={addingExam}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-sm whitespace-nowrap"
+                    >
+                      {addingExam ? "Adding..." : "+ Add Paper"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs uppercase">
+                    <tr>
+                      <th className="py-2.5 px-4">Branch & Sem</th>
+                      <th className="py-2.5 px-4">Code & Subject</th>
+                      <th className="py-2.5 px-4">Exam Date & Shift</th>
+                      <th className="py-2.5 px-4">Room / Hall</th>
+                      <th className="py-2.5 px-4 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 text-xs">
+                    {examSchedule.map((paper) => (
+                      <tr key={paper._id}>
+                        <td className="py-3 px-4 font-semibold text-slate-700">
+                          {paper.department} • Sem {paper.semester}
+                        </td>
+                        <td className="py-3 px-4 font-bold text-slate-900">
+                          <span className="font-mono text-blue-700 mr-1.5">
+                            [{paper.subjectCode}]
+                          </span>
+                          {paper.subject}
+                        </td>
+                        <td className="py-3 px-4 text-slate-600">
+                          {new Date(paper.examDate).toLocaleDateString("en-IN")} • {paper.shiftTime}
+                        </td>
+                        <td className="py-3 px-4 font-semibold text-slate-700">
+                          {paper.roomNumber}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            onClick={() => handleDeleteExamPaper(paper._id)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {examSchedule.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-xs text-slate-400">
+                          No exam papers published yet. Add subjects above to populate Student Admit
+                          Cards.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 2. 75% Attendance Condonation / Admit Card Override */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-4 border-b border-slate-200 bg-amber-50/60 font-bold text-slate-900 flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Unlock className="w-4 h-4 text-amber-600" /> 75% Attendance Condonation & Admit
+                  Card Unlock ({condonations.length} Active)
+                </span>
+                <span className="text-xs font-medium text-slate-500">
+                  {shortAttendanceStudents.length} student(s) currently below 75% attendance
+                </span>
+              </div>
+
+              <form
+                onSubmit={handleGrantCondonation}
+                className="p-4 border-b border-slate-200 flex flex-col sm:flex-row gap-3"
+              >
+                <select
+                  required
+                  value={condoneStudentId}
+                  onChange={(e) => setCondoneStudentId(e.target.value)}
+                  className="sm:w-80 px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-medium"
+                >
+                  <option value="">-- Select Student to Unlock Admit Card --</option>
+                  {users
+                    .filter((u) => u.role === "student")
+                    .map((s) => {
+                      const tel = getStudentTelemetry(s._id);
+                      return (
+                        <option key={s._id} value={s._id}>
+                          {s.name} (Roll: {s.rollNumber || "N/A"}) — Att:{" "}
+                          {tel ? `${tel.attendancePct}%` : "N/A"}
+                        </option>
+                      );
+                    })}
+                </select>
+                <input
+                  type="text"
+                  required
+                  value={condoneReason}
+                  onChange={(e) => setCondoneReason(e.target.value)}
+                  placeholder="Condonation Reason (e.g. Hospitalization / Dean Special Approval)..."
+                  className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs"
+                />
+                <button
+                  type="submit"
+                  disabled={grantingCondone}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm whitespace-nowrap"
+                >
+                  {grantingCondone ? "Unlocking..." : "Grant Condonation & Unlock"}
+                </button>
+              </form>
+
+              <div className="divide-y divide-slate-200">
+                {condonations.map((c) => (
+                  <div
+                    key={c._id}
+                    className="p-4 flex items-center justify-between gap-4 text-xs"
+                  >
+                    <div>
+                      <p className="font-bold text-slate-900 text-sm">
+                        {c.studentId?.name || "Student"}{" "}
+                        <span className="text-xs font-normal text-slate-500">
+                          (Roll: {c.studentId?.rollNumber || "N/A"} • {c.studentId?.department} Sem{" "}
+                          {c.studentId?.semester || 1})
+                        </span>
+                      </p>
+                      <p className="text-slate-600 mt-0.5">
+                        Reason: {c.reason} • Authorized by <strong>{c.grantedBy}</strong>
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRevokeCondonation(c.studentId?._id)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-semibold hover:bg-rose-100"
+                    >
+                      <Lock className="w-3.5 h-3.5" /> Revoke Pass
+                    </button>
+                  </div>
+                ))}
+                {condonations.length === 0 && (
+                  <p className="p-6 text-center text-xs text-slate-400">
+                    No special attendance condonations granted yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: CALENDAR & OFFICIAL NOTICES */}
         {activeTab === "calendar" && (
           <div className="space-y-6">
-            {/* Academic Calendar & Holiday Publisher */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 flex items-center gap-2">
                 <CalendarPlus className="w-4 h-4 text-blue-600" /> Academic Calendar & Holiday
@@ -1320,7 +1647,6 @@ export const AdminPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* Official Campus Circular / Notice Broadcaster */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 flex items-center gap-2">
                 <Megaphone className="w-4 h-4 text-indigo-600" /> Official Campus Notice & Circular
@@ -1418,10 +1744,9 @@ export const AdminPanel: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 4: CREATE VERIFIED ACCOUNTS & BULK SEMESTER PROMOTION */}
+        {/* TAB 5: CREATE VERIFIED ACCOUNTS & BULK SEMESTER PROMOTION */}
         {activeTab === "bulk" && (
           <div className="grid lg:grid-cols-3 gap-6">
-            {/* Create Verified Account Form */}
             <form
               onSubmit={handleCreateUser}
               className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4"
@@ -1587,7 +1912,6 @@ export const AdminPanel: React.FC = () => {
               </button>
             </form>
 
-            {/* Bulk Semester Promotion Tool */}
             <form
               onSubmit={handlePromoteSemester}
               className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between"
