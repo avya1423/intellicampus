@@ -24,6 +24,10 @@ import {
   HeartPulse,
   Copy,
   Download,
+  Radio,
+  QrCode,
+  RefreshCw,
+  StopCircle,
 } from "lucide-react";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -53,6 +57,7 @@ export const TeacherPanel: React.FC = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<
     | "attendance"
+    | "live-otp"
     | "routine"
     | "assignments"
     | "leaves"
@@ -70,6 +75,14 @@ export const TeacherPanel: React.FC = () => {
   const [notices, setNotices] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [leaves, setLeaves] = useState<any[]>([]);
+
+  // Live QR / OTP Attendance Session State
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [liveSubject, setLiveSubject] = useState<string>("");
+  const [liveDuration, setLiveDuration] = useState<number>(5);
+  const [startingSession, setStartingSession] = useState<boolean>(false);
+  const [closingSession, setClosingSession] = useState<boolean>(false);
+  const [nowTick, setNowTick] = useState<number>(Date.now());
 
   // Shared Branch, Semester, Date & Day Sync
   const [department, setDepartment] = useState<string>(user?.department || "Computer Science");
@@ -135,6 +148,13 @@ export const TeacherPanel: React.FC = () => {
   const [historySubjectFilter, setHistorySubjectFilter] = useState<string>("All");
   const [historyDateFilter, setHistoryDateFilter] = useState<string>("");
 
+  const loadSessions = () => {
+    api
+      .get("/sessions/active")
+      .then((res) => setSessions(res.data || []))
+      .catch(console.error);
+  };
+
   const loadAll = () => {
     api.get("/users/students").then((res) => {
       setStudents(res.data);
@@ -151,11 +171,27 @@ export const TeacherPanel: React.FC = () => {
     api.get("/notices").then((res) => setNotices(res.data)).catch(console.error);
     api.get("/assignments").then((res) => setAssignments(res.data)).catch(console.error);
     api.get("/leaves/all").then((res) => setLeaves(res.data)).catch(console.error);
+    loadSessions();
   };
 
   useEffect(() => {
     loadAll();
   }, []);
+
+  // Live countdown & auto-refresh check-ins every 5 seconds while on Live OTP tab
+  useEffect(() => {
+    if (activeTab !== "live-otp") return;
+    const timer = setInterval(() => {
+      setNowTick(Date.now());
+    }, 1000);
+    const poller = setInterval(() => {
+      loadSessions();
+    }, 5000);
+    return () => {
+      clearInterval(timer);
+      clearInterval(poller);
+    };
+  }, [activeTab]);
 
   // Sync Master Weekly Draft whenever Branch, Semester, or saved routineSlots change
   useEffect(() => {
@@ -175,10 +211,12 @@ export const TeacherPanel: React.FC = () => {
       setMarksSubject(uniqueSubs[0]);
       setProxySubject(uniqueSubs[0]);
       setAssignSubject(uniqueSubs[0]);
+      setLiveSubject(uniqueSubs[0]);
     } else {
       setMarksSubject("__custom__");
       setProxySubject("__custom__");
       setAssignSubject("__custom__");
+      setLiveSubject("__custom__");
     }
   }, [department, semester, routineSlots]);
 
@@ -210,6 +248,55 @@ export const TeacherPanel: React.FC = () => {
       }
     }
   }, [department, semester, dayOfWeek, proxyMode, routineSlots]);
+
+  // Active Live Session Object
+  const activeLiveSession = sessions.find(
+    (s) => s.isActive && new Date(s.expiresAt).getTime() > nowTick
+  );
+
+  const handleStartLiveSession = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const chosenSubject = liveSubject === "__custom__" ? customSubject.trim() : liveSubject;
+    if (!chosenSubject) {
+      setMsg("Please select or enter a subject before starting a Live OTP session.");
+      return;
+    }
+    setStartingSession(true);
+    setMsg("");
+    try {
+      await api.post("/sessions/start", {
+        department,
+        semester,
+        subject: chosenSubject,
+        timeSlot: `${dayOfWeek} Live Session`,
+        durationMinutes: liveDuration,
+      });
+      setMsg(
+        `Live Classroom OTP Session started for ${chosenSubject} (${department} Sem ${semester})!`
+      );
+      loadSessions();
+    } catch (err: any) {
+      setMsg(err.response?.data?.message || "Failed to start live attendance session.");
+    } finally {
+      setStartingSession(false);
+    }
+  };
+
+  const handleCloseLiveSession = async (sessionId: string, markRemainingAbsent: boolean) => {
+    setClosingSession(true);
+    setMsg("");
+    try {
+      const { data } = await api.post(`/sessions/${sessionId}/close`, {
+        markRemainingAbsent,
+      });
+      setMsg(data.message);
+      loadAll();
+    } catch (err: any) {
+      setMsg(err.response?.data?.message || "Failed to close session.");
+    } finally {
+      setClosingSession(false);
+    }
+  };
 
   // Helper: Get live attendance percentage of a student from riskList
   const getStudentAttendancePct = (studentId: string): number | null => {
@@ -599,6 +686,15 @@ export const TeacherPanel: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  // Remaining time string for Active Live OTP Session
+  const getRemainingCountdown = (expiresAtStr: string): string => {
+    const diffMs = Math.max(0, new Date(expiresAtStr).getTime() - nowTick);
+    const totalSec = Math.floor(diffMs / 1000);
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+
   return (
     <TeacherLayout>
       <div className="space-y-6">
@@ -669,7 +765,7 @@ export const TeacherPanel: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Faculty Classroom & Academic Hub</h1>
             <p className="text-sm text-slate-500 mt-1">
-              Leave-aware attendance, weekly timetable, assignment submissions, leave approvals, batch marks & notices
+              Live QR/OTP attendance, leave-aware registers, weekly timetable, assignments, leaves & batch marks
             </p>
           </div>
 
@@ -677,15 +773,32 @@ export const TeacherPanel: React.FC = () => {
             <button
               onClick={() => setActiveTab("attendance")}
               className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "attendance" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                activeTab === "attendance"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <ClipboardList className="w-4 h-4" /> Take Attendance
             </button>
             <button
+              onClick={() => setActiveTab("live-otp")}
+              className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                activeTab === "live-otp"
+                  ? "bg-white text-emerald-700 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Radio className="w-4 h-4 text-emerald-600" /> Live QR / OTP
+              {activeLiveSession && (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+              )}
+            </button>
+            <button
               onClick={() => setActiveTab("routine")}
               className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "routine" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                activeTab === "routine"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <CalendarClock className="w-4 h-4" /> Weekly Routine
@@ -693,7 +806,9 @@ export const TeacherPanel: React.FC = () => {
             <button
               onClick={() => setActiveTab("assignments")}
               className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "assignments" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                activeTab === "assignments"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <Upload className="w-4 h-4" /> Assignments ({assignments.length})
@@ -701,7 +816,9 @@ export const TeacherPanel: React.FC = () => {
             <button
               onClick={() => setActiveTab("leaves")}
               className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "leaves" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                activeTab === "leaves"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <HeartPulse className="w-4 h-4" /> Leaves
@@ -714,7 +831,9 @@ export const TeacherPanel: React.FC = () => {
             <button
               onClick={() => setActiveTab("corrections")}
               className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "corrections" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                activeTab === "corrections"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <MessageSquareWarning className="w-4 h-4" /> Corrections
@@ -727,7 +846,9 @@ export const TeacherPanel: React.FC = () => {
             <button
               onClick={() => setActiveTab("marks")}
               className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "marks" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                activeTab === "marks"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <Award className="w-4 h-4" /> Batch Marks
@@ -735,7 +856,9 @@ export const TeacherPanel: React.FC = () => {
             <button
               onClick={() => setActiveTab("notices")}
               className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "notices" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                activeTab === "notices"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <Megaphone className="w-4 h-4" /> Class Notices
@@ -743,7 +866,9 @@ export const TeacherPanel: React.FC = () => {
             <button
               onClick={() => setActiveTab("history")}
               className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "history" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                activeTab === "history"
+                  ? "bg-white text-blue-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
               }`}
             >
               <History className="w-4 h-4" /> Register Logs
@@ -823,6 +948,220 @@ export const TeacherPanel: React.FC = () => {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* TAB 0: LIVE CLASSROOM QR / 4-DIGIT OTP ATTENDANCE PROJECTOR */}
+        {activeTab === "live-otp" && (
+          <div className="space-y-6">
+            {/* Start New Session Card */}
+            {!activeLiveSession ? (
+              <form
+                onSubmit={handleStartLiveSession}
+                className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4"
+              >
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <Radio className="w-5 h-5 text-emerald-600" /> Start Zero-Proxy Live Classroom
+                    Attendance
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Generates a time-bound 4-digit OTP for {department} Semester {semester}. Students
+                    enter this code on their dashboard to mark themselves Present automatically.
+                  </p>
+                </div>
+
+                <div className="grid sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Subject</label>
+                    <select
+                      value={liveSubject}
+                      onChange={(e) => setLiveSubject(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                    >
+                      {allSemesterSubjects.map((sub) => (
+                        <option key={sub} value={sub}>
+                          {sub}
+                        </option>
+                      ))}
+                      <option value="__custom__">+ Custom Subject...</option>
+                    </select>
+                  </div>
+
+                  {liveSubject === "__custom__" && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Custom Subject Name
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={customSubject}
+                        onChange={(e) => setCustomSubject(e.target.value)}
+                        placeholder="e.g. Cloud Computing"
+                        className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      OTP Valid Duration
+                    </label>
+                    <select
+                      value={liveDuration}
+                      onChange={(e) => setLiveDuration(Number(e.target.value))}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                    >
+                      <option value={2}>2 Minutes (Strict)</option>
+                      <option value={5}>5 Minutes (Recommended)</option>
+                      <option value={10}>10 Minutes</option>
+                      <option value={15}>15 Minutes</option>
+                    </select>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={startingSession}
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-bold shadow-sm inline-flex items-center gap-2"
+                >
+                  <Radio className="w-4 h-4" />
+                  {startingSession ? "Generating Live OTP..." : "Generate Live Classroom OTP"}
+                </button>
+              </form>
+            ) : (
+              /* Active Live Projector Display */
+              <div className="bg-slate-900 text-white rounded-2xl border-2 border-emerald-500 shadow-xl p-6 sm:p-8 space-y-6">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                  <div className="space-y-2">
+                    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold uppercase">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" /> Live
+                      Session Active
+                    </span>
+                    <h2 className="text-2xl sm:text-3xl font-extrabold">
+                      {activeLiveSession.subject}
+                    </h2>
+                    <p className="text-sm text-slate-300">
+                      {activeLiveSession.department} • Semester {activeLiveSession.semester} •
+                      Expires in{" "}
+                      <span className="font-mono font-bold text-amber-300">
+                        {getRemainingCountdown(activeLiveSession.expiresAt)}
+                      </span>
+                    </p>
+                  </div>
+
+                  {/* Big Projector OTP & QR Card */}
+                  <div className="flex items-center gap-5 bg-white text-slate-900 px-6 py-4 rounded-2xl shadow-lg">
+                    <QrCode className="w-16 h-16 text-slate-900 shrink-0" />
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                        Classroom Check-In OTP
+                      </p>
+                      <p className="font-mono text-4xl sm:text-5xl font-black tracking-widest text-blue-600 mt-0.5">
+                        {activeLiveSession.code}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Checked-In Students Feed */}
+                <div className="bg-slate-800/80 rounded-xl border border-slate-700 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                      Checked-In Students ({activeLiveSession.attendees?.length || 0} Present)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={loadSessions}
+                      className="inline-flex items-center gap-1 text-xs text-slate-300 hover:text-white"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> Refresh List
+                    </button>
+                  </div>
+
+                  {activeLiveSession.attendees?.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {activeLiveSession.attendees.map((att: any, idx: number) => (
+                        <span
+                          key={idx}
+                          className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-200 border border-emerald-500/30 text-xs font-semibold"
+                        >
+                          ✓ {att.studentName} ({att.rollNumber || "Verified"})
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 py-2">
+                      Waiting for students to enter OTP{" "}
+                      <strong className="text-white">{activeLiveSession.code}</strong> on their
+                      Student Dashboard...
+                    </p>
+                  )}
+                </div>
+
+                {/* Close Session Controls */}
+                <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    disabled={closingSession}
+                    onClick={() => handleCloseLiveSession(activeLiveSession._id, false)}
+                    className="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                  >
+                    <StopCircle className="w-4 h-4" /> Close Session Only
+                  </button>
+                  <button
+                    type="button"
+                    disabled={closingSession}
+                    onClick={() => handleCloseLiveSession(activeLiveSession._id, true)}
+                    className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-sm inline-flex items-center gap-1.5"
+                  >
+                    <StopCircle className="w-4 h-4" /> Close & Mark Remaining Students Absent
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Past Live Sessions History */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 text-sm">
+                Recent Live Classroom Sessions ({sessions.length})
+              </div>
+              <div className="divide-y divide-slate-200">
+                {sessions.map((s) => (
+                  <div
+                    key={s._id}
+                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                  >
+                    <div>
+                      <span className="font-bold text-slate-900 text-sm">{s.subject}</span>
+                      <span className="ml-2 px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
+                        {s.department} • Sem {s.semester}
+                      </span>
+                      <p className="text-slate-500 mt-0.5">
+                        OTP: <strong className="font-mono">{s.code}</strong> • Checked-In:{" "}
+                        <strong>{s.attendees?.length || 0}</strong> student(s) •{" "}
+                        {new Date(s.createdAt).toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full font-bold w-fit ${
+                        s.isActive
+                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {s.isActive ? "Active" : "Closed"}
+                    </span>
+                  </div>
+                ))}
+                {sessions.length === 0 && (
+                  <p className="p-6 text-center text-xs text-slate-400">
+                    No live attendance sessions started yet.
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
@@ -1147,7 +1486,6 @@ export const TeacherPanel: React.FC = () => {
                             type="button"
                             onClick={() => copyPreviousDayTo(dayIdx)}
                             className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:underline"
-                            title={`Copy ${DAYS[dayIdx - 1]}'s schedule`}
                           >
                             <Copy className="w-3 h-3" /> Copy {DAYS[dayIdx - 1].slice(0, 3)}
                           </button>
@@ -1174,7 +1512,6 @@ export const TeacherPanel: React.FC = () => {
                                 type="button"
                                 onClick={() => removeDraftSlot(day, idx)}
                                 className="p-1 text-slate-400 hover:text-red-600"
-                                title="Remove period"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -1233,7 +1570,7 @@ export const TeacherPanel: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: ASSIGNMENTS & LAB SUBMISSION TRACKER + QUICK GRADING */}
+        {/* TAB 3: ASSIGNMENTS & LAB SUBMISSION TRACKER */}
         {activeTab === "assignments" && (
           <div className="space-y-6">
             <form
@@ -1298,7 +1635,7 @@ export const TeacherPanel: React.FC = () => {
                   type="text"
                   value={assignInstructions}
                   onChange={(e) => setAssignInstructions(e.target.value)}
-                  placeholder="Instructions or submission guidelines (Google Drive PDF / GitHub repo link)..."
+                  placeholder="Instructions or submission guidelines..."
                   className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
                 />
                 <button
@@ -1311,7 +1648,6 @@ export const TeacherPanel: React.FC = () => {
               </div>
             </form>
 
-            {/* Active Assignments & Student Submissions */}
             <div className="space-y-4">
               {assignments.map((task) => {
                 const subs = task.submissions || [];
@@ -1352,7 +1688,6 @@ export const TeacherPanel: React.FC = () => {
                           type="button"
                           onClick={() => handleDeleteAssignment(task._id)}
                           className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg"
-                          title="Delete assignment"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
