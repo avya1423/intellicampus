@@ -16,15 +16,47 @@ router.get("/profile", protect, async (req: AuthRequest, res: Response) => {
   }
 });
 
-// Update basic profile details (Name, Department, Semester)
+// Update profile & college/contact details
 router.patch("/profile", protect, async (req: AuthRequest, res: Response) => {
   try {
-    const { name, department, semester, rollNumber } = req.body;
+    const {
+      name,
+      department,
+      semester,
+      rollNumber,
+      enrollmentNumber,
+      program,
+      batch,
+      section,
+      collegeName,
+      phone,
+      guardianName,
+      guardianPhone,
+      bloodGroup,
+      address,
+    } = req.body;
+
     const updated = await User.findByIdAndUpdate(
       req.user?.id,
-      { name, department, semester, rollNumber },
+      {
+        name,
+        department,
+        semester,
+        rollNumber,
+        enrollmentNumber,
+        program,
+        batch,
+        section,
+        collegeName,
+        phone,
+        guardianName,
+        guardianPhone,
+        bloodGroup,
+        address,
+      },
       { new: true }
     ).select("-password");
+
     res.json(updated);
   } catch (error: any) {
     res.status(500).json({ message: error.message });
