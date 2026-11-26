@@ -10,6 +10,7 @@ import { Features, SystemArchitecture, MLDesign, APIDocs } from "./pages/InfoPag
 import { StudentPanel } from "./pages/StudentPanel";
 import { AttendancePage } from "./pages/student/AttendancePage";
 import { MarksPage } from "./pages/student/MarksPage";
+import { GradeCardPage } from "./pages/student/GradeCardPage";
 import { StudentProfile } from "./pages/student/StudentProfile";
 import { TeacherPanel } from "./pages/TeacherPanel";
 import { TeacherRiskDashboard } from "./pages/TeacherRiskDashboard";
@@ -52,6 +53,14 @@ export function App() {
             element={
               <RoleRoute allowedRoles={["student"]}>
                 <MarksPage />
+              </RoleRoute>
+            }
+          />
+          <Route
+            path="/student/grade-card"
+            element={
+              <RoleRoute allowedRoles={["student"]}>
+                <GradeCardPage />
               </RoleRoute>
             }
           />
