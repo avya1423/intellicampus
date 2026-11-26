@@ -20,6 +20,10 @@ import {
   UserCheck,
   Eye,
   Save,
+  Upload,
+  HeartPulse,
+  Copy,
+  Download,
 } from "lucide-react";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -48,7 +52,14 @@ interface DraftSlot {
 export const TeacherPanel: React.FC = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<
-    "attendance" | "routine" | "history" | "marks" | "notices" | "corrections"
+    | "attendance"
+    | "routine"
+    | "assignments"
+    | "leaves"
+    | "marks"
+    | "notices"
+    | "corrections"
+    | "history"
   >("attendance");
 
   const [students, setStudents] = useState<any[]>([]);
@@ -57,8 +68,10 @@ export const TeacherPanel: React.FC = () => {
   const [corrections, setCorrections] = useState<any[]>([]);
   const [attendanceLogs, setAttendanceLogs] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [leaves, setLeaves] = useState<any[]>([]);
 
-  // Branch, Semester, Date & Day Sync
+  // Shared Branch, Semester, Date & Day Sync
   const [department, setDepartment] = useState<string>(user?.department || "Computer Science");
   const [semester, setSemester] = useState<number>(1);
   const todayStr = new Date().toISOString().split("T")[0];
@@ -84,8 +97,9 @@ export const TeacherPanel: React.FC = () => {
   const [weeklyDraft, setWeeklyDraft] = useState<DraftSlot[]>([]);
   const [savingRoutine, setSavingRoutine] = useState<boolean>(false);
 
-  // Student Search & Bulk Attendance
+  // Student Search, Defaulter Filter & Bulk Attendance
   const [studentSearch, setStudentSearch] = useState<string>("");
+  const [onlyDefaulters, setOnlyDefaulters] = useState<boolean>(false);
   const [bulkStatus, setBulkStatus] = useState<Record<string, "Present" | "Absent" | "Late">>({});
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [msg, setMsg] = useState<string>("");
@@ -105,6 +119,18 @@ export const TeacherPanel: React.FC = () => {
   const [resourceLink, setResourceLink] = useState<string>("");
   const [postingNotice, setPostingNotice] = useState<boolean>(false);
 
+  // Assignments & Lab Submissions State
+  const [assignTitle, setAssignTitle] = useState<string>("");
+  const [assignSubject, setAssignSubject] = useState<string>("");
+  const [assignType, setAssignType] = useState<"Assignment" | "Lab Record" | "Mini Project">(
+    "Assignment"
+  );
+  const [assignDueDate, setAssignDueDate] = useState<string>("");
+  const [assignInstructions, setAssignInstructions] = useState<string>("");
+  const [creatingAssign, setCreatingAssign] = useState<boolean>(false);
+  const [expandedAssignId, setExpandedAssignId] = useState<string | null>(null);
+  const [quickGradeMap, setQuickGradeMap] = useState<Record<string, string>>({});
+
   // Register History Filters
   const [historySubjectFilter, setHistorySubjectFilter] = useState<string>("All");
   const [historyDateFilter, setHistoryDateFilter] = useState<string>("");
@@ -123,6 +149,8 @@ export const TeacherPanel: React.FC = () => {
     api.get("/corrections/teacher").then((res) => setCorrections(res.data)).catch(console.error);
     api.get("/attendance/all").then((res) => setAttendanceLogs(res.data)).catch(console.error);
     api.get("/notices").then((res) => setNotices(res.data)).catch(console.error);
+    api.get("/assignments").then((res) => setAssignments(res.data)).catch(console.error);
+    api.get("/leaves/all").then((res) => setLeaves(res.data)).catch(console.error);
   };
 
   useEffect(() => {
@@ -141,14 +169,16 @@ export const TeacherPanel: React.FC = () => {
         subject: r.subject,
       }))
     );
-    const uniqueSubs = Array.from(new Set(existing.map((r) => r.subject)));
+    const uniqueSubs: string[] = Array.from(new Set(existing.map((r: any) => String(r.subject))));
     setSubjectPool(uniqueSubs);
     if (uniqueSubs.length > 0) {
       setMarksSubject(uniqueSubs[0]);
       setProxySubject(uniqueSubs[0]);
+      setAssignSubject(uniqueSubs[0]);
     } else {
       setMarksSubject("__custom__");
       setProxySubject("__custom__");
+      setAssignSubject("__custom__");
     }
   }, [department, semester, routineSlots]);
 
@@ -163,11 +193,11 @@ export const TeacherPanel: React.FC = () => {
     (r) => r.department === department && r.semester === semester && r.dayOfWeek === dayOfWeek
   );
 
-  const allSemesterSubjects = Array.from(
+  const allSemesterSubjects: string[] = Array.from(
     new Set(
       routineSlots
         .filter((r) => r.department === department && r.semester === semester)
-        .map((r) => r.subject)
+        .map((r: any) => String(r.subject))
     )
   );
 
@@ -181,6 +211,27 @@ export const TeacherPanel: React.FC = () => {
     }
   }, [department, semester, dayOfWeek, proxyMode, routineSlots]);
 
+  // Helper: Get live attendance percentage of a student from riskList
+  const getStudentAttendancePct = (studentId: string): number | null => {
+    const found = riskList.find((r) => r.student?._id === studentId);
+    return found ? found.attendancePct : null;
+  };
+
+  // Helper: Check if a student has an Approved Medical/Duty Leave on selectedDate
+  const getApprovedLeaveForDate = (studentId: string, dateStr: string) => {
+    const target = new Date(dateStr + "T12:00:00").getTime();
+    return leaves.find((lv) => {
+      if (lv.status !== "Approved") return false;
+      const lvStuId = lv.studentId?._id || lv.studentId;
+      if (lvStuId !== studentId) return false;
+      const start = new Date(lv.fromDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(lv.toDate);
+      end.setHours(23, 59, 59, 999);
+      return target >= start.getTime() && target <= end.getTime();
+    });
+  };
+
   // Master Weekly Routine Builder Helpers
   const addSubjectToPool = () => {
     const trimmed = newPoolSubject.trim();
@@ -193,8 +244,7 @@ export const TeacherPanel: React.FC = () => {
 
   const addPeriodToDay = (day: string) => {
     const daySlots = weeklyDraft.filter((s) => s.dayOfWeek === day);
-    const nextPreset =
-      PERIOD_PRESETS[daySlots.length] || `Period ${daySlots.length + 1}`;
+    const nextPreset = PERIOD_PRESETS[daySlots.length] || `Period ${daySlots.length + 1}`;
     setWeeklyDraft((prev) => [
       ...prev,
       {
@@ -203,6 +253,20 @@ export const TeacherPanel: React.FC = () => {
         subject: subjectPool[0] || "",
       },
     ]);
+  };
+
+  const copyPreviousDayTo = (targetDayIndex: number) => {
+    if (targetDayIndex <= 0) return;
+    const prevDay = DAYS[targetDayIndex - 1];
+    const targetDay = DAYS[targetDayIndex];
+    const prevSlots = weeklyDraft.filter((s) => s.dayOfWeek === prevDay);
+    const withoutTarget = weeklyDraft.filter((s) => s.dayOfWeek !== targetDay);
+    const copied = prevSlots.map((s) => ({
+      dayOfWeek: targetDay,
+      timeSlot: s.timeSlot,
+      subject: s.subject,
+    }));
+    setWeeklyDraft([...withoutTarget, ...copied]);
   };
 
   const updateDraftSlot = (
@@ -251,7 +315,7 @@ export const TeacherPanel: React.FC = () => {
         })),
       });
       setMsg(
-        `Master Weekly Timetable saved for ${department} Semester ${semester}! It will automatically repeat every week.`
+        `Master Weekly Timetable saved for ${department} Semester ${semester}! It repeats automatically every week.`
       );
       loadAll();
     } catch {
@@ -261,13 +325,18 @@ export const TeacherPanel: React.FC = () => {
     }
   };
 
-  const classStudents = students.filter(
-    (s) =>
-      s.department === department &&
-      (s.semester || 1) === semester &&
-      (s.name?.toLowerCase().includes(studentSearch.toLowerCase()) ||
-        (s.rollNumber || "").toLowerCase().includes(studentSearch.toLowerCase()))
-  );
+  const classStudents = students.filter((s) => {
+    const matchesClass = s.department === department && (s.semester || 1) === semester;
+    const matchesSearch =
+      s.name?.toLowerCase().includes(studentSearch.toLowerCase()) ||
+      (s.rollNumber || "").toLowerCase().includes(studentSearch.toLowerCase());
+    if (!matchesClass || !matchesSearch) return false;
+    if (onlyDefaulters) {
+      const pct = getStudentAttendancePct(s._id);
+      return pct !== null && pct < 75;
+    }
+    return true;
+  });
 
   const selectedRoutineObj = todayScheduledSlots.find((s) => s._id === selectedSlotId);
   const activeSubjectName = proxyMode
@@ -286,6 +355,23 @@ export const TeacherPanel: React.FC = () => {
       updated[s._id] = status;
     });
     setBulkStatus(updated);
+  };
+
+  const markLeaveStudentsPresent = () => {
+    const updated = { ...bulkStatus };
+    let count = 0;
+    classStudents.forEach((s) => {
+      if (getApprovedLeaveForDate(s._id, selectedDate)) {
+        updated[s._id] = "Present";
+        count += 1;
+      }
+    });
+    setBulkStatus(updated);
+    setMsg(
+      count > 0
+        ? `Marked ${count} student(s) on Approved Leave as Present!`
+        : "No students in this class have an approved leave on this date."
+    );
   };
 
   const handleBulkSubmit = async () => {
@@ -316,11 +402,72 @@ export const TeacherPanel: React.FC = () => {
         `Attendance saved for ${classStudents.length} students on ${selectedDate} in ${subjectLabel} (${activeTimeSlot})!`
       );
       api.get("/attendance/all").then((res) => setAttendanceLogs(res.data));
+      api.get("/risk/all").then((res) => setRiskList(res.data.students || []));
     } catch {
       setMsg("Failed to record attendance. Please try again.");
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // Assignments Create, Delete & Quick Grade Submission
+  const handleCreateAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const finalSub = assignSubject === "__custom__" ? customSubject.trim() : assignSubject;
+    if (!assignTitle.trim() || !finalSub || !assignDueDate) return;
+    setCreatingAssign(true);
+    setMsg("");
+    try {
+      await api.post("/assignments", {
+        title: assignTitle.trim(),
+        subject: finalSub,
+        department,
+        semester,
+        type: assignType,
+        dueDate: assignDueDate,
+        instructions: assignInstructions.trim() || undefined,
+        createdBy: user?.name || "Faculty",
+      });
+      setAssignTitle("");
+      setAssignInstructions("");
+      setMsg(`${assignType} "${assignTitle}" published to ${department} Semester ${semester}!`);
+      loadAll();
+    } finally {
+      setCreatingAssign(false);
+    }
+  };
+
+  const handleDeleteAssignment = async (id: string) => {
+    await api.delete(`/assignments/${id}`);
+    loadAll();
+  };
+
+  const handleQuickGradeSubmission = async (
+    studentId: string,
+    studentName: string,
+    subject: string,
+    key: string
+  ) => {
+    const scoreVal = quickGradeMap[key];
+    if (!scoreVal || scoreVal.trim() === "") return;
+    await api.post("/marks/add", {
+      studentId,
+      subject,
+      examType: "Assignment",
+      score: Number(scoreVal),
+    });
+    setQuickGradeMap((prev) => ({ ...prev, [key]: "" }));
+    setMsg(`Saved Assignment score (${scoreVal}/100) for ${studentName} in ${subject}!`);
+  };
+
+  // Leave Approval Handler
+  const handleLeaveDecision = async (id: string, status: "Approved" | "Rejected") => {
+    await api.patch(`/leaves/${id}`, {
+      status,
+      reviewedBy: user?.name || "Faculty",
+    });
+    setMsg(`Student leave application ${status.toLowerCase()}!`);
+    loadAll();
   };
 
   const handleBatchMarksSubmit = async (e: React.FormEvent) => {
@@ -417,10 +564,11 @@ export const TeacherPanel: React.FC = () => {
   };
 
   const pendingCorrections = corrections.filter((c) => c.status === "Pending");
+  const pendingLeaves = leaves.filter((l) => l.status === "Pending");
 
-  const uniqueHistorySubjects = [
+  const uniqueHistorySubjects: string[] = [
     "All",
-    ...Array.from(new Set(attendanceLogs.map((l) => l.subject))),
+    ...Array.from(new Set(attendanceLogs.map((l: any) => String(l.subject)))),
   ];
 
   const filteredHistory = attendanceLogs.filter((log) => {
@@ -430,12 +578,33 @@ export const TeacherPanel: React.FC = () => {
     return matchSub && matchDate;
   });
 
+  const exportHistoryCSV = () => {
+    if (filteredHistory.length === 0) return;
+    const headers = ["Date", "Student Name", "Roll Number", "Subject", "Period", "Status"];
+    const rows = filteredHistory.map((l) => [
+      new Date(l.date).toLocaleDateString("en-IN"),
+      `"${l.studentId?.name || "Student"}"`,
+      l.studentId?.rollNumber || "N/A",
+      `"${l.subject}"`,
+      `"${l.timeSlot || "-"}"`,
+      l.status,
+    ]);
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `attendance_register_${todayStr}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <TeacherLayout>
       <div className="space-y-6">
         {/* 360 Student Academic Dossier Modal */}
         {inspectedStudent && (
-          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-md w-full p-6 space-y-4">
               <div className="flex items-start justify-between">
                 <div>
@@ -500,14 +669,14 @@ export const TeacherPanel: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Faculty Classroom & Academic Hub</h1>
             <p className="text-sm text-slate-500 mt-1">
-              One-time Master Weekly Timetable, period-wise attendance, batch marks & student correction approvals
+              Leave-aware attendance, weekly timetable, assignment submissions, leave approvals, batch marks & notices
             </p>
           </div>
 
           <div className="flex flex-wrap bg-slate-100 p-1.5 rounded-xl border border-slate-200 gap-1 w-fit">
             <button
               onClick={() => setActiveTab("attendance")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+              className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 activeTab === "attendance" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
               }`}
             >
@@ -515,39 +684,36 @@ export const TeacherPanel: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab("routine")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+              className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 activeTab === "routine" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              <CalendarClock className="w-4 h-4" /> Weekly Routine Setup
+              <CalendarClock className="w-4 h-4" /> Weekly Routine
             </button>
             <button
-              onClick={() => setActiveTab("history")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "history" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              onClick={() => setActiveTab("assignments")}
+              className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                activeTab === "assignments" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              <History className="w-4 h-4" /> Register Logs
+              <Upload className="w-4 h-4" /> Assignments ({assignments.length})
             </button>
             <button
-              onClick={() => setActiveTab("marks")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "marks" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              onClick={() => setActiveTab("leaves")}
+              className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                activeTab === "leaves" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              <Award className="w-4 h-4" /> Batch Marks
-            </button>
-            <button
-              onClick={() => setActiveTab("notices")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                activeTab === "notices" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <Megaphone className="w-4 h-4" /> Class Notices
+              <HeartPulse className="w-4 h-4" /> Leaves
+              {pendingLeaves.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-600 text-white text-[10px]">
+                  {pendingLeaves.length}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setActiveTab("corrections")}
-              className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+              className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                 activeTab === "corrections" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
               }`}
             >
@@ -557,6 +723,30 @@ export const TeacherPanel: React.FC = () => {
                   {pendingCorrections.length}
                 </span>
               )}
+            </button>
+            <button
+              onClick={() => setActiveTab("marks")}
+              className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                activeTab === "marks" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Award className="w-4 h-4" /> Batch Marks
+            </button>
+            <button
+              onClick={() => setActiveTab("notices")}
+              className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                activeTab === "notices" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Megaphone className="w-4 h-4" /> Class Notices
+            </button>
+            <button
+              onClick={() => setActiveTab("history")}
+              className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                activeTab === "history" ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <History className="w-4 h-4" /> Register Logs
             </button>
           </div>
         </div>
@@ -568,10 +758,12 @@ export const TeacherPanel: React.FC = () => {
         )}
 
         {/* Shared Branch / Semester / Date Selector Bar */}
-        {activeTab !== "corrections" && activeTab !== "history" && (
+        {activeTab !== "corrections" && activeTab !== "history" && activeTab !== "leaves" && (
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Branch / Department</label>
+              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
+                Branch / Department
+              </label>
               <select
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
@@ -585,7 +777,9 @@ export const TeacherPanel: React.FC = () => {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Semester</label>
+              <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
+                Semester
+              </label>
               <select
                 value={semester}
                 onChange={(e) => setSemester(Number(e.target.value))}
@@ -601,7 +795,9 @@ export const TeacherPanel: React.FC = () => {
             {activeTab === "attendance" && (
               <>
                 <div>
-                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Class Date</label>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
+                    Class Date
+                  </label>
                   <input
                     type="date"
                     value={selectedDate}
@@ -610,7 +806,9 @@ export const TeacherPanel: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Auto-Synced Day</label>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1">
+                    Auto-Synced Day
+                  </label>
                   <select
                     value={dayOfWeek}
                     onChange={(e) => setDayOfWeek(e.target.value)}
@@ -628,7 +826,7 @@ export const TeacherPanel: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 1: FLEXIBLE ROUTINE & PERIOD-WISE BULK ATTENDANCE */}
+        {/* TAB 1: LEAVE-AWARE ROUTINE & PERIOD-WISE BULK ATTENDANCE */}
         {activeTab === "attendance" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-200 bg-slate-50/70 space-y-4">
@@ -674,7 +872,9 @@ export const TeacherPanel: React.FC = () => {
 
                   {proxyMode && proxySubject === "__custom__" && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">Custom Subject Name</label>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">
+                        Custom Subject Name
+                      </label>
                       <input
                         type="text"
                         value={customSubject}
@@ -716,19 +916,31 @@ export const TeacherPanel: React.FC = () => {
                 </div>
               </div>
 
-              {/* Quick Bulk Controls & Student Filter */}
-              <div className="pt-3 border-t border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="relative w-full sm:w-64">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2" />
-                  <input
-                    type="text"
-                    value={studentSearch}
-                    onChange={(e) => setStudentSearch(e.target.value)}
-                    placeholder="Filter by name or roll no..."
-                    className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
-                  />
+              {/* Quick Bulk Controls, Leave Sync & Defaulter Filter */}
+              <div className="pt-3 border-t border-slate-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="relative w-60">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2" />
+                    <input
+                      type="text"
+                      value={studentSearch}
+                      onChange={(e) => setStudentSearch(e.target.value)}
+                      placeholder="Filter by name or roll no..."
+                      className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                    />
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={onlyDefaulters}
+                      onChange={(e) => setOnlyDefaulters(e.target.checked)}
+                      className="rounded border-slate-300 text-blue-600"
+                    />
+                    Only &lt;75% Attendance Students
+                  </label>
                 </div>
-                <div className="flex items-center gap-2">
+
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-slate-500 font-medium">Quick Mark:</span>
                   <button
                     type="button"
@@ -744,6 +956,13 @@ export const TeacherPanel: React.FC = () => {
                   >
                     All Absent
                   </button>
+                  <button
+                    type="button"
+                    onClick={markLeaveStudentsPresent}
+                    className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold hover:bg-indigo-100"
+                  >
+                    Sync Approved Leaves
+                  </button>
                 </div>
               </div>
             </div>
@@ -754,50 +973,80 @@ export const TeacherPanel: React.FC = () => {
                   <tr>
                     <th className="py-3 px-4 font-semibold">Student (Click for 360° Profile)</th>
                     <th className="py-3 px-4 font-semibold">Roll Number</th>
+                    <th className="py-3 px-4 font-semibold">Overall % & Leave Status</th>
                     <th className="py-3 px-4 font-semibold">Attendance Status ({selectedDate})</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  {classStudents.map((s) => (
-                    <tr key={s._id} className="hover:bg-slate-50/60">
-                      <td className="py-3 px-4">
-                        <button
-                          type="button"
-                          onClick={() => openStudentDossier(s._id)}
-                          className="font-semibold text-slate-900 hover:text-blue-600 inline-flex items-center gap-1.5 text-left"
-                        >
-                          {s.name} <Eye className="w-3.5 h-3.5 text-slate-400" />
-                        </button>
-                      </td>
-                      <td className="py-3 px-4 text-slate-600">{s.rollNumber || s.email}</td>
-                      <td className="py-3 px-4">
-                        <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
-                          {(["Present", "Absent", "Late"] as const).map((st) => (
-                            <button
-                              key={st}
-                              type="button"
-                              onClick={() => setBulkStatus((prev) => ({ ...prev, [s._id]: st }))}
-                              className={`px-3 py-1 text-xs font-semibold transition ${
-                                bulkStatus[s._id] === st
-                                  ? st === "Present"
-                                    ? "bg-emerald-600 text-white"
-                                    : st === "Absent"
-                                    ? "bg-red-600 text-white"
-                                    : "bg-amber-500 text-white"
-                                  : "bg-white text-slate-600 hover:bg-slate-50"
-                              }`}
-                            >
-                              {st}
-                            </button>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {classStudents.map((s) => {
+                    const attPct = getStudentAttendancePct(s._id);
+                    const approvedLeave = getApprovedLeaveForDate(s._id, selectedDate);
+                    return (
+                      <tr key={s._id} className="hover:bg-slate-50/60">
+                        <td className="py-3 px-4">
+                          <button
+                            type="button"
+                            onClick={() => openStudentDossier(s._id)}
+                            className="font-semibold text-slate-900 hover:text-blue-600 inline-flex items-center gap-1.5 text-left"
+                          >
+                            {s.name} <Eye className="w-3.5 h-3.5 text-slate-400" />
+                          </button>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600">{s.rollNumber || s.email}</td>
+                        <td className="py-3 px-4">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {attPct !== null ? (
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                                  attPct < 75
+                                    ? "bg-red-50 text-red-700 border border-red-200"
+                                    : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                }`}
+                              >
+                                {attPct}%
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-400">New</span>
+                            )}
+                            {approvedLeave && (
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                title={approvedLeave.reason}
+                              >
+                                On {approvedLeave.leaveType}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+                            {(["Present", "Absent", "Late"] as const).map((st) => (
+                              <button
+                                key={st}
+                                type="button"
+                                onClick={() => setBulkStatus((prev) => ({ ...prev, [s._id]: st }))}
+                                className={`px-3 py-1 text-xs font-semibold transition ${
+                                  bulkStatus[s._id] === st
+                                    ? st === "Present"
+                                      ? "bg-emerald-600 text-white"
+                                      : st === "Absent"
+                                      ? "bg-red-600 text-white"
+                                      : "bg-amber-500 text-white"
+                                    : "bg-white text-slate-600 hover:bg-slate-50"
+                                }`}
+                              >
+                                {st}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {classStudents.length === 0 && (
                     <tr>
-                      <td colSpan={3} className="py-8 text-center text-slate-400">
-                        No students found in {department} Semester {semester}.
+                      <td colSpan={4} className="py-8 text-center text-slate-400">
+                        No matching students found in {department} Semester {semester}.
                       </td>
                     </tr>
                   )}
@@ -807,10 +1056,9 @@ export const TeacherPanel: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 2: ONE-TIME MASTER WEEKLY TIMETABLE BUILDER (MONDAY - SATURDAY) */}
+        {/* TAB 2: ONE-TIME MASTER WEEKLY TIMETABLE BUILDER */}
         {activeTab === "routine" && (
           <div className="space-y-6">
-            {/* Step 1: Subject Pool + Save Button */}
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div>
@@ -818,7 +1066,7 @@ export const TeacherPanel: React.FC = () => {
                     Master Weekly Timetable — {department} (Semester {semester})
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Set Monday–Saturday periods once and click Save. This schedule repeats automatically every week!
+                    Set Monday–Saturday periods once and click Save. Repeats automatically every week!
                   </p>
                 </div>
                 <button
@@ -832,7 +1080,6 @@ export const TeacherPanel: React.FC = () => {
                 </button>
               </div>
 
-              {/* Quick Semester Subject Bank */}
               <div className="pt-3 border-t border-slate-100 space-y-2">
                 <label className="block text-xs font-bold uppercase text-slate-500">
                   Step 1: Add Semester Subjects Once (Then Assign to Any Day/Period Below)
@@ -884,9 +1131,8 @@ export const TeacherPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* Step 2: 6-Day Weekly Matrix (Monday to Saturday) */}
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {DAYS.map((day) => {
+              {DAYS.map((day, dayIdx) => {
                 const daySlots = weeklyDraft.filter((s) => s.dayOfWeek === day);
                 return (
                   <div
@@ -896,11 +1142,16 @@ export const TeacherPanel: React.FC = () => {
                     <div>
                       <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                         <span className="font-bold text-slate-900 text-sm">{day}</span>
-                        <span className="text-[11px] font-semibold text-slate-500">
-                          {daySlots.length === 0
-                            ? "No Classes"
-                            : `${daySlots.length} Period${daySlots.length > 1 ? "s" : ""}`}
-                        </span>
+                        {dayIdx > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => copyPreviousDayTo(dayIdx)}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:underline"
+                            title={`Copy ${DAYS[dayIdx - 1]}'s schedule`}
+                          >
+                            <Copy className="w-3 h-3" /> Copy {DAYS[dayIdx - 1].slice(0, 3)}
+                          </button>
+                        )}
                       </div>
 
                       <div className="p-3 space-y-2.5">
@@ -982,92 +1233,392 @@ export const TeacherPanel: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 3: ATTENDANCE REGISTER AUDIT LOGS */}
-        {activeTab === "history" && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <span className="font-bold text-slate-900 text-sm">
-                Recent Attendance Register Logs ({filteredHistory.length})
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
+        {/* TAB 3: ASSIGNMENTS & LAB SUBMISSION TRACKER + QUICK GRADING */}
+        {activeTab === "assignments" && (
+          <div className="space-y-6">
+            <form
+              onSubmit={handleCreateAssignment}
+              className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4"
+            >
+              <h2 className="text-base font-bold text-slate-900">
+                Publish Assignment / Lab Task to {department} (Semester {semester})
+              </h2>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <input
-                  type="date"
-                  value={historyDateFilter}
-                  onChange={(e) => setHistoryDateFilter(e.target.value)}
-                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                  type="text"
+                  required
+                  value={assignTitle}
+                  onChange={(e) => setAssignTitle(e.target.value)}
+                  placeholder="Title (e.g. Lab 4: Binary Search Trees)"
+                  className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
                 />
                 <select
-                  value={historySubjectFilter}
-                  onChange={(e) => setHistorySubjectFilter(e.target.value)}
-                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                  value={assignSubject}
+                  onChange={(e) => setAssignSubject(e.target.value)}
+                  className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
                 >
-                  {uniqueHistorySubjects.map((sub) => (
+                  {allSemesterSubjects.map((sub) => (
                     <option key={sub} value={sub}>
-                      {sub === "All" ? "All Subjects" : sub}
+                      {sub}
                     </option>
                   ))}
+                  <option value="__custom__">+ Custom Subject...</option>
                 </select>
+                <select
+                  value={assignType}
+                  onChange={(e) => setAssignType(e.target.value as any)}
+                  className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                >
+                  <option value="Assignment">Assignment</option>
+                  <option value="Lab Record">Lab Record</option>
+                  <option value="Mini Project">Mini Project</option>
+                </select>
+                <input
+                  type="date"
+                  required
+                  value={assignDueDate}
+                  onChange={(e) => setAssignDueDate(e.target.value)}
+                  className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                />
               </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                  <tr>
-                    <th className="py-3 px-4 font-semibold">Date</th>
-                    <th className="py-3 px-4 font-semibold">Student</th>
-                    <th className="py-3 px-4 font-semibold">Subject & Period</th>
-                    <th className="py-3 px-4 font-semibold">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
-                  {filteredHistory.map((log) => (
-                    <tr key={log._id} className="hover:bg-slate-50/60">
-                      <td className="py-3 px-4 text-slate-600">
-                        {new Date(log.date).toLocaleDateString("en-IN")}
-                      </td>
-                      <td className="py-3 px-4 font-medium text-slate-900">
-                        {log.studentId?.name || "Student"}{" "}
-                        <span className="text-xs text-slate-500">
-                          ({log.studentId?.rollNumber || "N/A"})
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-slate-700">
-                        {log.subject}{" "}
-                        {log.timeSlot && (
-                          <span className="text-xs text-slate-400">({log.timeSlot})</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                            log.status === "Present"
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : log.status === "Late"
-                              ? "bg-amber-50 text-amber-700 border border-amber-200"
-                              : "bg-red-50 text-red-700 border border-red-200"
-                          }`}
+
+              {assignSubject === "__custom__" && (
+                <input
+                  type="text"
+                  required
+                  value={customSubject}
+                  onChange={(e) => setCustomSubject(e.target.value)}
+                  placeholder="Enter Subject Name..."
+                  className="w-full sm:w-72 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                />
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="text"
+                  value={assignInstructions}
+                  onChange={(e) => setAssignInstructions(e.target.value)}
+                  placeholder="Instructions or submission guidelines (Google Drive PDF / GitHub repo link)..."
+                  className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                />
+                <button
+                  type="submit"
+                  disabled={creatingAssign}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold shadow-sm"
+                >
+                  {creatingAssign ? "Publishing..." : "Publish Task"}
+                </button>
+              </div>
+            </form>
+
+            {/* Active Assignments & Student Submissions */}
+            <div className="space-y-4">
+              {assignments.map((task) => {
+                const subs = task.submissions || [];
+                const isExpanded = expandedAssignId === task._id;
+                return (
+                  <div
+                    key={task._id}
+                    className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
+                  >
+                    <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-slate-900 text-sm">{task.title}</span>
+                          <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-semibold">
+                            {task.subject} • {task.type}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-xs font-medium">
+                            {task.department} Sem {task.semester}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          Due: {new Date(task.dueDate).toLocaleDateString("en-IN")} •{" "}
+                          <strong>{subs.length}</strong> Student Submission(s)
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedAssignId(isExpanded ? null : task._id)}
+                          className="px-3.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold"
                         >
-                          {log.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredHistory.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-slate-400">
-                        No attendance logs found.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                          {isExpanded
+                            ? "Hide Submissions"
+                            : `View Submissions & Grade (${subs.length})`}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAssignment(task._id)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg"
+                          title="Delete assignment"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="border-t border-slate-200 bg-slate-50/60 p-4">
+                        {subs.length > 0 ? (
+                          <div className="divide-y divide-slate-200 bg-white rounded-xl border border-slate-200">
+                            {subs.map((sub: any, idx: number) => {
+                              const gradeKey = `${task._id}_${sub.studentId}`;
+                              return (
+                                <div
+                                  key={idx}
+                                  className="p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                                >
+                                  <div className="space-y-0.5">
+                                    <p className="font-bold text-slate-900 text-sm">
+                                      {sub.studentName}{" "}
+                                      <span className="text-xs font-normal text-slate-500">
+                                        ({sub.rollNumber || "N/A"})
+                                      </span>
+                                    </p>
+                                    {sub.remarks && (
+                                      <p className="text-slate-600">Note: "{sub.remarks}"</p>
+                                    )}
+                                    <p className="text-slate-400">
+                                      Submitted:{" "}
+                                      {new Date(sub.submittedAt).toLocaleDateString("en-IN")}
+                                    </p>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <a
+                                      href={sub.submissionLink}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 font-semibold hover:bg-blue-100"
+                                    >
+                                      <ExternalLink className="w-3.5 h-3.5" /> Open Work
+                                    </a>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      value={quickGradeMap[gradeKey] || ""}
+                                      onChange={(e) =>
+                                        setQuickGradeMap((prev) => ({
+                                          ...prev,
+                                          [gradeKey]: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="Score /100"
+                                      className="w-24 px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleQuickGradeSubmission(
+                                          sub.studentId,
+                                          sub.studentName,
+                                          task.subject,
+                                          gradeKey
+                                        )
+                                      }
+                                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                                    >
+                                      Save Grade
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-center text-xs text-slate-400 py-4">
+                            No student has submitted work for this task yet.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {assignments.length === 0 && (
+                <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-xs text-slate-400">
+                  No assignments or lab records created yet.
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* TAB 4: BATCH MARKS ENTRY GRID */}
+        {/* TAB 4: STUDENT MEDICAL & DUTY LEAVE APPROVALS */}
+        {activeTab === "leaves" && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900">
+              Student Medical & Duty Leave Applications ({leaves.length})
+            </div>
+            <div className="divide-y divide-slate-200">
+              {leaves.map((lv) => (
+                <div
+                  key={lv._id}
+                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                >
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => lv.studentId?._id && openStudentDossier(lv.studentId._id)}
+                        className="font-bold text-slate-900 hover:text-blue-600 text-sm inline-flex items-center gap-1"
+                      >
+                        <UserCheck className="w-4 h-4 text-blue-600" />
+                        {lv.studentId?.name || "Student"}
+                      </button>
+                      <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
+                        Roll: {lv.studentId?.rollNumber || "N/A"}
+                      </span>
+                      <span className="text-xs px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold">
+                        {lv.leaveType}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-700">
+                      Dates:{" "}
+                      <strong>
+                        {new Date(lv.fromDate).toLocaleDateString("en-IN")} –{" "}
+                        {new Date(lv.toDate).toLocaleDateString("en-IN")}
+                      </strong>{" "}
+                      • {lv.studentId?.department} Sem {lv.studentId?.semester || 1}
+                    </p>
+                    <p className="text-xs text-slate-500">Reason: "{lv.reason}"</p>
+                    {lv.documentLink && (
+                      <a
+                        href={lv.documentLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:underline pt-0.5"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> View Medical / Event Proof
+                      </a>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {lv.status === "Pending" ? (
+                      <>
+                        <button
+                          onClick={() => handleLeaveDecision(lv._id, "Approved")}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                        >
+                          <Check className="w-3.5 h-3.5" /> Approve Leave
+                        </button>
+                        <button
+                          onClick={() => handleLeaveDecision(lv._id, "Rejected")}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                        >
+                          <X className="w-3.5 h-3.5" /> Reject
+                        </button>
+                      </>
+                    ) : (
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-bold ${
+                          lv.status === "Approved"
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : "bg-red-50 text-red-700 border border-red-200"
+                        }`}
+                      >
+                        {lv.status}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {leaves.length === 0 && (
+                <p className="p-8 text-center text-xs text-slate-400">
+                  No medical or duty leave applications submitted yet.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: STUDENT ATTENDANCE CORRECTION REQUESTS */}
+        {activeTab === "corrections" && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900">
+              Student Attendance Correction Requests ({corrections.length})
+            </div>
+            <div className="divide-y divide-slate-200">
+              {corrections.map((c) => (
+                <div
+                  key={c._id}
+                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                >
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => c.studentId?._id && openStudentDossier(c.studentId._id)}
+                        className="font-bold text-slate-900 hover:text-blue-600 text-sm inline-flex items-center gap-1"
+                      >
+                        <UserCheck className="w-4 h-4 text-blue-600" />
+                        {c.studentId?.name || "Student"}
+                      </button>
+                      <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
+                        Roll: {c.studentId?.rollNumber || "N/A"}
+                      </span>
+                      <span className="text-xs text-slate-500">
+                        {c.studentId?.department} • Sem {c.studentId?.semester || 1}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-700">
+                      Subject: <strong>{c.subject}</strong> • Date:{" "}
+                      <strong>{new Date(c.date).toLocaleDateString("en-IN")}</strong> • Marked:{" "}
+                      <span className="text-red-600 font-semibold">{c.currentStatus}</span> → Requested:{" "}
+                      <span className="text-emerald-600 font-semibold">Present</span>
+                    </p>
+                    <p className="text-xs text-slate-500">Reason: "{c.reason}"</p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {c.status === "Pending" ? (
+                      <>
+                        <button
+                          onClick={() => handleCorrectionDecision(c._id, "Approved")}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                        >
+                          <Check className="w-3.5 h-3.5" /> Approve (Mark Present)
+                        </button>
+                        <button
+                          onClick={() => handleCorrectionDecision(c._id, "Rejected")}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
+                        >
+                          <X className="w-3.5 h-3.5" /> Reject
+                        </button>
+                      </>
+                    ) : (
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-bold ${
+                          c.status === "Approved"
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : "bg-red-50 text-red-700 border border-red-200"
+                        }`}
+                      >
+                        {c.status}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {corrections.length === 0 && (
+                <p className="p-8 text-center text-xs text-slate-400">
+                  No attendance correction requests submitted by students yet.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: BATCH MARKS ENTRY GRID */}
         {activeTab === "marks" && (
-          <form onSubmit={handleBatchMarksSubmit} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <form
+            onSubmit={handleBatchMarksSubmit}
+            className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"
+          >
             <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-end justify-between gap-3">
               <div className="flex flex-wrap items-end gap-3">
                 <div>
@@ -1088,7 +1639,9 @@ export const TeacherPanel: React.FC = () => {
 
                 {marksSubject === "__custom__" && (
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1">Custom Subject</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">
+                      Custom Subject
+                    </label>
                     <input
                       type="text"
                       required
@@ -1166,10 +1719,13 @@ export const TeacherPanel: React.FC = () => {
           </form>
         )}
 
-        {/* TAB 5: CLASS ANNOUNCEMENTS & STUDY MATERIAL BROADCAST */}
+        {/* TAB 7: CLASS ANNOUNCEMENTS & STUDY MATERIAL BROADCAST */}
         {activeTab === "notices" && (
           <div className="space-y-6">
-            <form onSubmit={handlePostNotice} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <form
+              onSubmit={handlePostNotice}
+              className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4"
+            >
               <h2 className="text-base font-bold text-slate-900">
                 Broadcast Notice / Study Material to {department} (Semester {semester})
               </h2>
@@ -1179,7 +1735,7 @@ export const TeacherPanel: React.FC = () => {
                   required
                   value={noticeTitle}
                   onChange={(e) => setNoticeTitle(e.target.value)}
-                  placeholder="Title (e.g. Unit 3 Lecture Notes & Assignment)"
+                  placeholder="Title (e.g. Unit 3 Lecture Notes & Syllabus)"
                   className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
                 />
                 <input
@@ -1195,7 +1751,7 @@ export const TeacherPanel: React.FC = () => {
                 required
                 value={noticeMsg}
                 onChange={(e) => setNoticeMsg(e.target.value)}
-                placeholder="Write instructions, syllabus details, or submission deadlines..."
+                placeholder="Write instructions, syllabus details, or class updates..."
                 className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
               />
               <button
@@ -1242,83 +1798,101 @@ export const TeacherPanel: React.FC = () => {
                   </div>
                 ))}
                 {notices.length === 0 && (
-                  <p className="p-6 text-center text-xs text-slate-400">No class notices published yet.</p>
+                  <p className="p-6 text-center text-xs text-slate-400">
+                    No class notices published yet.
+                  </p>
                 )}
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 6: STUDENT ATTENDANCE CORRECTION REQUESTS */}
-        {activeTab === "corrections" && (
+        {/* TAB 8: ATTENDANCE REGISTER AUDIT LOGS + CSV EXPORT */}
+        {activeTab === "history" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900">
-              Student Attendance Correction Requests ({corrections.length})
+            <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className="font-bold text-slate-900 text-sm">
+                Recent Attendance Register Logs ({filteredHistory.length})
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  value={historyDateFilter}
+                  onChange={(e) => setHistoryDateFilter(e.target.value)}
+                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                />
+                <select
+                  value={historySubjectFilter}
+                  onChange={(e) => setHistorySubjectFilter(e.target.value)}
+                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
+                >
+                  {uniqueHistorySubjects.map((sub) => (
+                    <option key={sub} value={sub}>
+                      {sub === "All" ? "All Subjects" : sub}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={exportHistoryCSV}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-semibold shadow-2xs"
+                >
+                  <Download className="w-3.5 h-3.5" /> Export CSV
+                </button>
+              </div>
             </div>
-            <div className="divide-y divide-slate-200">
-              {corrections.map((c) => (
-                <div key={c._id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => c.studentId?._id && openStudentDossier(c.studentId._id)}
-                        className="font-bold text-slate-900 hover:text-blue-600 text-sm inline-flex items-center gap-1"
-                      >
-                        <UserCheck className="w-4 h-4 text-blue-600" />
-                        {c.studentId?.name || "Student"}
-                      </button>
-                      <span className="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
-                        Roll: {c.studentId?.rollNumber || "N/A"}
-                      </span>
-                      <span className="text-xs text-slate-500">
-                        {c.studentId?.department} • Sem {c.studentId?.semester || 1}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-700">
-                      Subject: <strong>{c.subject}</strong> • Date:{" "}
-                      <strong>{new Date(c.date).toLocaleDateString("en-IN")}</strong> • Marked:{" "}
-                      <span className="text-red-600 font-semibold">{c.currentStatus}</span> → Requested:{" "}
-                      <span className="text-emerald-600 font-semibold">Present</span>
-                    </p>
-                    <p className="text-xs text-slate-500">Reason: "{c.reason}"</p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {c.status === "Pending" ? (
-                      <>
-                        <button
-                          onClick={() => handleCorrectionDecision(c._id, "Approved")}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                  <tr>
+                    <th className="py-3 px-4 font-semibold">Date</th>
+                    <th className="py-3 px-4 font-semibold">Student</th>
+                    <th className="py-3 px-4 font-semibold">Subject & Period</th>
+                    <th className="py-3 px-4 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {filteredHistory.map((log) => (
+                    <tr key={log._id} className="hover:bg-slate-50/60">
+                      <td className="py-3 px-4 text-slate-600">
+                        {new Date(log.date).toLocaleDateString("en-IN")}
+                      </td>
+                      <td className="py-3 px-4 font-medium text-slate-900">
+                        {log.studentId?.name || "Student"}{" "}
+                        <span className="text-xs text-slate-500">
+                          ({log.studentId?.rollNumber || "N/A"})
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-slate-700">
+                        {log.subject}{" "}
+                        {log.timeSlot && (
+                          <span className="text-xs text-slate-400">({log.timeSlot})</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            log.status === "Present"
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : log.status === "Late"
+                              ? "bg-amber-50 text-amber-700 border border-amber-200"
+                              : "bg-red-50 text-red-700 border border-red-200"
+                          }`}
                         >
-                          <Check className="w-3.5 h-3.5" /> Approve (Mark Present)
-                        </button>
-                        <button
-                          onClick={() => handleCorrectionDecision(c._id, "Rejected")}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold"
-                        >
-                          <X className="w-3.5 h-3.5" /> Reject
-                        </button>
-                      </>
-                    ) : (
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-bold ${
-                          c.status === "Approved"
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : "bg-red-50 text-red-700 border border-red-200"
-                        }`}
-                      >
-                        {c.status}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {corrections.length === 0 && (
-                <p className="p-8 text-center text-xs text-slate-400">
-                  No attendance correction requests submitted by students yet.
-                </p>
-              )}
+                          {log.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredHistory.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="py-8 text-center text-slate-400">
+                        No attendance logs found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
