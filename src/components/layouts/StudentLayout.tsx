@@ -7,6 +7,7 @@ import {
   UserCircle,
   CalendarDays,
   Award,
+  Ticket,
 } from "lucide-react";
 import { Navbar } from "../Navbar";
 
@@ -16,6 +17,7 @@ export const StudentLayout: React.FC<{ children: React.ReactNode }> = ({ childre
     { label: "Overview & AI Advisor", path: "/student", icon: LayoutDashboard },
     { label: "Attendance & Target", path: "/student/attendance", icon: CalendarCheck },
     { label: "Marks & Grades", path: "/student/marks", icon: BookOpen },
+    { label: "Exam Admit Card", path: "/student/admit-card", icon: Ticket },
     { label: "Grade Card & Bonafide", path: "/student/grade-card", icon: Award },
     { label: "Academic Calendar", path: "/student/calendar", icon: CalendarDays },
     { label: "My Profile", path: "/student/profile", icon: UserCircle },
