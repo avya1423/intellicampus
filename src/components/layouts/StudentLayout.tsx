@@ -1,6 +1,13 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, CalendarCheck, BookOpen, UserCircle, CalendarDays } from "lucide-react";
+import {
+  LayoutDashboard,
+  CalendarCheck,
+  BookOpen,
+  UserCircle,
+  CalendarDays,
+  Award,
+} from "lucide-react";
 import { Navbar } from "../Navbar";
 
 export const StudentLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -9,6 +16,7 @@ export const StudentLayout: React.FC<{ children: React.ReactNode }> = ({ childre
     { label: "Overview & AI Advisor", path: "/student", icon: LayoutDashboard },
     { label: "Attendance & Target", path: "/student/attendance", icon: CalendarCheck },
     { label: "Marks & Grades", path: "/student/marks", icon: BookOpen },
+    { label: "Grade Card & Bonafide", path: "/student/grade-card", icon: Award },
     { label: "Academic Calendar", path: "/student/calendar", icon: CalendarDays },
     { label: "My Profile", path: "/student/profile", icon: UserCircle },
   ];
@@ -17,7 +25,7 @@ export const StudentLayout: React.FC<{ children: React.ReactNode }> = ({ childre
     <div className="min-h-screen flex flex-col bg-slate-50">
       <Navbar />
       <div className="max-w-7xl w-full mx-auto px-4 py-6 flex flex-col md:flex-row gap-6 flex-1">
-        <aside className="w-full md:w-64 shrink-0">
+        <aside className="w-full md:w-64 shrink-0 print:hidden">
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3 space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
