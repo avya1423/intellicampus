@@ -17,6 +17,8 @@ import calendarRoutes from "./routes/calendar";
 import noticeRoutes from "./routes/notices";
 import leaveRoutes from "./routes/leaves";
 import assignmentRoutes from "./routes/assignments";
+import sessionRoutes from "./routes/sessions";
+import examRoutes from "./routes/exams";
 
 dotenv.config();
 
@@ -42,6 +44,8 @@ app.use("/api/calendar", calendarRoutes);
 app.use("/api/notices", noticeRoutes);
 app.use("/api/leaves", leaveRoutes);
 app.use("/api/assignments", assignmentRoutes);
+app.use("/api/sessions", sessionRoutes);
+app.use("/api/exams", examRoutes);
 
 const PORT = process.env.PORT || 5000;
 
