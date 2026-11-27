@@ -26,6 +26,9 @@ import {
   Award,
   Radio,
   Ticket,
+  ShieldCheck,
+  ShieldAlert,
+  Flame,
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
@@ -172,9 +175,10 @@ export const StudentPanel: React.FC = () => {
     }
   };
 
-  // Aggregate Held, Attended, Missed
-  const totalHeld = attendanceData.totalClasses || 0;
-  const totalAttended = attendanceData.records.filter(
+  // Exclude Cancelled lectures from held/attended/missed calculations
+  const activeAttRecords = attendanceData.records.filter((r) => r.status !== "Cancelled");
+  const totalHeld = activeAttRecords.length;
+  const totalAttended = activeAttRecords.filter(
     (r) => r.status === "Present" || r.status === "Late"
   ).length;
   const totalMissed = Math.max(0, totalHeld - totalAttended);
@@ -213,7 +217,7 @@ export const StudentPanel: React.FC = () => {
 
   // Subject-Wise Held vs Attended vs Target Breakdown
   const subjectBreakdown: SubjectSummary[] = semesterSubjects.map((sub) => {
-    const subRecords = attendanceData.records.filter((r) => r.subject === sub);
+    const subRecords = activeAttRecords.filter((r) => r.subject === sub);
     const held = subRecords.length;
     const attended = subRecords.filter((r) => r.status === "Present" || r.status === "Late").length;
     const missed = held - attended;
@@ -237,6 +241,28 @@ export const StudentPanel: React.FC = () => {
       percentage,
       neededForTarget,
       canSkip,
+    };
+  });
+
+  // Today's Live Period-by-Period Status Strip
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todaysRecords = attendanceData.records.filter(
+    (r) => new Date(r.date).toISOString().split("T")[0] === todayStr
+  );
+  const todaysRoutine = routineSlots.filter((r) => r.dayOfWeek === todayDayName);
+  const liveTodayPeriods = todaysRoutine.map((slot) => {
+    const matched =
+      todaysRecords.find((r) => r.subject === slot.subject && r.timeSlot === slot.timeSlot) ||
+      todaysRecords.find((r) => r.subject === slot.subject);
+    const subObj = subjectBreakdown.find((s) => s.subject === slot.subject);
+    const held = subObj?.held || 0;
+    const att = subObj?.attended || 0;
+    const pctIfSkipped = held + 1 > 0 ? Math.round((att / (held + 1)) * 100) : 0;
+    return {
+      ...slot,
+      status: matched ? matched.status : "Upcoming",
+      pctIfSkipped,
+      isSafeToSkip: pctIfSkipped >= 75,
     };
   });
 
@@ -489,6 +515,69 @@ export const StudentPanel: React.FC = () => {
           )}
         </div>
 
+        {/* TODAY'S LIVE PERIOD-BY-PERIOD TRACKER STRIP */}
+        {liveTodayPeriods.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-slate-200 bg-slate-50/70 flex flex-wrap items-center justify-between gap-2">
+              <span className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                <Clock className="w-4 h-4 text-blue-600" /> Today's Live Period Tracker (
+                {todayDayName})
+              </span>
+              <Link
+                to="/student/attendance"
+                className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:underline"
+              >
+                <Flame className="w-3.5 h-3.5 text-orange-500" /> 12-Week Heatmap & Trip Simulator{" "}
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
+            </div>
+            <div className="p-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {liveTodayPeriods.map((p) => (
+                <div
+                  key={p._id}
+                  className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col justify-between gap-2"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-[11px] font-bold text-blue-700">{p.timeSlot}</p>
+                      <p className="font-bold text-slate-900 text-sm mt-0.5">{p.subject}</p>
+                    </div>
+                    <span
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold shrink-0 ${
+                        p.status === "Present" || p.status === "Late"
+                          ? "bg-emerald-600 text-white"
+                          : p.status === "Absent"
+                          ? "bg-rose-600 text-white"
+                          : p.status === "Cancelled"
+                          ? "bg-slate-200 text-slate-700"
+                          : "bg-blue-100 text-blue-800"
+                      }`}
+                    >
+                      {p.status}
+                    </span>
+                  </div>
+
+                  {p.status === "Upcoming" && (
+                    <div className="pt-1.5 border-t border-slate-200/70 flex items-center gap-1 text-[11px] font-semibold">
+                      {p.isSafeToSkip ? (
+                        <span className="text-emerald-700 inline-flex items-center gap-1">
+                          <ShieldCheck className="w-3.5 h-3.5" /> Safe to skip (Stays{" "}
+                          {p.pctIfSkipped}%)
+                        </span>
+                      ) : (
+                        <span className="text-amber-700 inline-flex items-center gap-1">
+                          <ShieldAlert className="w-3.5 h-3.5" /> Must attend (Drops to{" "}
+                          {p.pctIfSkipped}%)
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 4 Core Semester Telemetry KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
@@ -506,7 +595,7 @@ export const StudentPanel: React.FC = () => {
               <CalendarCheck className="w-3.5 h-3.5 text-blue-600" /> Classes Held
             </p>
             <p className="text-3xl font-extrabold mt-1.5 text-slate-900">{totalHeld}</p>
-            <p className="text-xs text-slate-500 mt-1">Total lectures conducted</p>
+            <p className="text-xs text-slate-500 mt-1">Total active lectures</p>
           </div>
 
           <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
@@ -642,13 +731,13 @@ export const StudentPanel: React.FC = () => {
 
           <div className="px-5 py-3 bg-slate-50/60 border-t border-slate-200 flex justify-between items-center text-xs">
             <span className="text-slate-500">
-              Marked absent by mistake? Request a correction in Attendance Log.
+              View 12-week heatmap, simulate multi-day leave or request attendance corrections.
             </span>
             <Link
               to="/student/attendance"
               className="font-bold text-blue-600 hover:underline inline-flex items-center gap-1"
             >
-              Date-Wise Log & Correction <ArrowRight className="w-3.5 h-3.5" />
+              Daily Heatmap, Simulator & Corrections <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
         </div>
@@ -949,7 +1038,6 @@ export const StudentPanel: React.FC = () => {
 
         {/* MEDICAL & DUTY LEAVE APPLICATION PORTAL + UPCOMING HOLIDAYS */}
         <div className="grid md:grid-cols-2 gap-6">
-          {/* Medical & Duty Leave Portal */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between">
               <span className="font-bold text-slate-900 text-sm flex items-center gap-2">
@@ -1186,7 +1274,6 @@ export const StudentPanel: React.FC = () => {
             </span>
           </div>
 
-          {/* 1-Click Smart Action Buttons */}
           <div className="px-4 py-2.5 bg-blue-50/40 border-b border-slate-200 flex flex-wrap gap-2">
             {[
               "Analyze my weakest subject and how to improve",
