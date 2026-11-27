@@ -1,388 +1,855 @@
 import React, { useEffect, useState } from "react";
 import { StudentLayout } from "../../components/layouts/StudentLayout";
+import { useAuth } from "../../auth/AuthContext";
 import api from "../../api/axios";
 import {
+  CalendarCheck,
   Target,
-  Filter,
-  AlertCircle,
+  AlertTriangle,
   CheckCircle2,
-  Clock,
-  XCircle,
   Send,
-  BookOpen,
+  Clock,
+  Flame,
+  Compass,
+  TrendingDown,
+  ShieldCheck,
+  ShieldAlert,
+  Ban,
 } from "lucide-react";
 
-interface SubjectStat {
+interface AttendanceRecord {
+  _id: string;
   subject: string;
-  total: number;
-  present: number;
+  timeSlot?: string;
+  date: string;
+  status: "Present" | "Absent" | "Late" | "Cancelled";
+  cancelReason?: string;
 }
 
+const ALL_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
 export const AttendancePage: React.FC = () => {
-  const [data, setData] = useState<{ percentage: number; totalClasses: number; records: any[] }>({
-    percentage: 0,
-    totalClasses: 0,
-    records: [],
-  });
+  const { user } = useAuth();
+  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [routineSlots, setRoutineSlots] = useState<any[]>([]);
+  const [leaves, setLeaves] = useState<any[]>([]);
   const [corrections, setCorrections] = useState<any[]>([]);
 
-  // Interactive Target Calculator (60, 70, 75, 80, 85)
+  const [selectedSubject, setSelectedSubject] = useState<string>("All");
   const [targetPct, setTargetPct] = useState<number>(75);
 
-  // Filters
-  const [selectedSubject, setSelectedSubject] = useState("All");
-  const [selectedDate, setSelectedDate] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState("All");
+  // Multi-Day Trip / Bunk Simulator State
+  const todayStr = new Date().toISOString().split("T")[0];
+  const [tripStart, setTripStart] = useState<string>(todayStr);
+  const [tripEnd, setTripEnd] = useState<string>(todayStr);
 
-  // Correction Box State
-  const [activeRecord, setActiveRecord] = useState<any | null>(null);
+  // Correction modal state
+  const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [feedbackMsg, setFeedbackMsg] = useState("");
+  const [msg, setMsg] = useState("");
 
   const loadData = () => {
-    api.get("/attendance/my").then((res) => setData(res.data)).catch(console.error);
-    api.get("/corrections/my").then((res) => setCorrections(res.data)).catch(console.error);
+    api
+      .get("/attendance/my")
+      .then((res) => setRecords(res.data.records || []))
+      .catch(console.error);
+    api
+      .get("/corrections/my")
+      .then((res) => setCorrections(res.data))
+      .catch(console.error);
+    api
+      .get("/leaves/my")
+      .then((res) => setLeaves(res.data))
+      .catch(console.error);
+
+    if (user?.department) {
+      api
+        .get(
+          `/routine?department=${encodeURIComponent(user.department)}&semester=${
+            user.semester || 1
+          }`
+        )
+        .then((res) => setRoutineSlots(res.data || []))
+        .catch(console.error);
+    }
   };
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [user?.department, user?.semester]);
 
-  // Target calculation logic
-  const total = data.totalClasses || 0;
-  const attended = data.records.filter((r) => r.status === "Present" || r.status === "Late").length;
-  const currentPct = data.percentage || 0;
+  // Active records (exclude Cancelled lectures from percentage calculations)
+  const activeRecords = records.filter((r) => r.status !== "Cancelled");
+
+  const subjects: string[] = [
+    "All",
+    ...Array.from(
+      new Set([
+        ...routineSlots.map((s: any) => String(s.subject)),
+        ...records.map((r) => String(r.subject)),
+      ])
+    ),
+  ];
+
+  const filteredActiveRecords =
+    selectedSubject === "All"
+      ? activeRecords
+      : activeRecords.filter((r) => r.subject === selectedSubject);
+
+  const filteredAllRecords =
+    selectedSubject === "All"
+      ? records
+      : records.filter((r) => r.subject === selectedSubject);
+
+  const totalClasses = filteredActiveRecords.length;
+  const presentCount = filteredActiveRecords.filter(
+    (r) => r.status === "Present" || r.status === "Late"
+  ).length;
+  const currentPct = totalClasses > 0 ? Math.round((presentCount / totalClasses) * 100) : 0;
+
+  // Dynamic Target Calculator Formula
   const t = Math.min(99, Math.max(1, targetPct)) / 100;
-
-  let targetMessage = "No classes logged yet. Once classes begin, your attendance projection will appear here.";
-  let isShort = false;
-
-  if (total > 0) {
+  let classesNeeded = 0;
+  let canSkip = 0;
+  if (totalClasses > 0) {
     if (currentPct < targetPct) {
-      isShort = true;
-      const classesNeeded = Math.ceil((t * total - attended) / (1 - t));
-      targetMessage = `To reach ${targetPct}% attendance, you must attend the next ${classesNeeded} consecutive class${
-        classesNeeded > 1 ? "es" : ""
-      } without any absence.`;
+      classesNeeded = Math.ceil((t * totalClasses - presentCount) / (1 - t));
     } else {
-      const canSkip = Math.floor(attended / t - total);
-      targetMessage =
-        canSkip > 0
-          ? `You have achieved your ${targetPct}% target! You can safely miss up to ${canSkip} upcoming class${
-              canSkip > 1 ? "es" : ""
-            } and stay above ${targetPct}%.`
-          : `You are right at ${targetPct}%. Attend the next class to maintain your target.`;
+      canSkip = Math.max(0, Math.floor(presentCount / t - totalClasses));
     }
   }
 
-  // Group by Subject (Explicitly typed for TypeScript build)
-  const subjectMap: Record<string, SubjectStat> = {};
-  data.records.forEach((r) => {
-    if (!subjectMap[r.subject]) {
-      subjectMap[r.subject] = { subject: r.subject, total: 0, present: 0 };
-    }
-    subjectMap[r.subject].total += 1;
-    if (r.status === "Present" || r.status === "Late") {
-      subjectMap[r.subject].present += 1;
-    }
+  // Helper: Subject-specific attendance stats
+  const getSubjectStats = (subName: string) => {
+    const subActive = activeRecords.filter((r) => r.subject === subName);
+    const held = subActive.length;
+    const attended = subActive.filter(
+      (r) => r.status === "Present" || r.status === "Late"
+    ).length;
+    const pct = held > 0 ? Math.round((attended / held) * 100) : 100;
+    return { held, attended, pct };
+  };
+
+  // =========================================================
+  // 1. GITHUB-STYLE 84-DAY (12-WEEK) HEATMAP & STREAK
+  // =========================================================
+  const approvedLeaves = leaves.filter((lv) => lv.status === "Approved");
+
+  const isDateOnApprovedLeave = (dateKey: string) => {
+    const dTime = new Date(dateKey + "T12:00:00").getTime();
+    return approvedLeaves.some((lv) => {
+      const s = new Date(lv.fromDate);
+      s.setHours(0, 0, 0, 0);
+      const e = new Date(lv.toDate);
+      e.setHours(23, 59, 59, 999);
+      return dTime >= s.getTime() && dTime <= e.getTime();
+    });
+  };
+
+  const recordsByDate: Record<string, AttendanceRecord[]> = {};
+  records.forEach((r) => {
+    const key = new Date(r.date).toISOString().split("T")[0];
+    if (!recordsByDate[key]) recordsByDate[key] = [];
+    recordsByDate[key].push(r);
   });
-  const subjectStats: SubjectStat[] = Object.values(subjectMap);
 
-  const uniqueSubjects: string[] = ["All", ...subjectStats.map((s) => s.subject)];
+  // Build 84 days aligned to start on Sunday
+  const todayObj = new Date();
+  todayObj.setHours(12, 0, 0, 0);
+  const endAligned = new Date(todayObj);
+  endAligned.setDate(todayObj.getDate() + (6 - todayObj.getDay()));
 
-  // Filtered Records
-  const filteredRecords = data.records.filter((r) => {
-    const matchSubject = selectedSubject === "All" || r.subject === selectedSubject;
-    const matchStatus = selectedStatus === "All" || r.status === selectedStatus;
-    const recordDateStr = new Date(r.date).toISOString().split("T")[0];
-    const matchDate = !selectedDate || recordDateStr === selectedDate;
-    return matchSubject && matchStatus && matchDate;
+  const heatmapWeeks: {
+    dateKey: string;
+    label: string;
+    isFuture: boolean;
+    colorClass: string;
+    tooltip: string;
+  }[][] = [];
+
+  const cursor = new Date(endAligned);
+  cursor.setDate(endAligned.getDate() - 83); // 12 weeks = 84 days
+
+  for (let w = 0; w < 12; w++) {
+    const weekDays = [];
+    for (let d = 0; d < 7; d++) {
+      const dateKey = cursor.toISOString().split("T")[0];
+      const isFuture = cursor.getTime() > todayObj.getTime();
+      const dayRecs = recordsByDate[dateKey] || [];
+      const activeDayRecs = dayRecs.filter((r) => r.status !== "Cancelled");
+      const onLeave = isDateOnApprovedLeave(dateKey);
+
+      let colorClass = "bg-slate-100 border-slate-200/70";
+      let tooltip = `${dateKey}: No classes logged`;
+
+      if (isFuture) {
+        colorClass = "bg-slate-50 border-dashed border-slate-200 opacity-50";
+        tooltip = `${dateKey}: Upcoming`;
+      } else if (onLeave) {
+        colorClass = "bg-blue-500 border-blue-600";
+        tooltip = `${dateKey}: Approved Medical / Duty Leave`;
+      } else if (activeDayRecs.length > 0) {
+        const pres = activeDayRecs.filter(
+          (r) => r.status === "Present" || r.status === "Late"
+        ).length;
+        if (pres === activeDayRecs.length) {
+          colorClass = "bg-emerald-500 border-emerald-600";
+          tooltip = `${dateKey}: All ${pres}/${activeDayRecs.length} Present`;
+        } else if (pres > 0) {
+          colorClass = "bg-amber-400 border-amber-500";
+          tooltip = `${dateKey}: Partial (${pres}/${activeDayRecs.length} Present)`;
+        } else {
+          colorClass = "bg-rose-500 border-rose-600";
+          tooltip = `${dateKey}: Absent (0/${activeDayRecs.length})`;
+        }
+      } else if (dayRecs.length > 0) {
+        colorClass = "bg-slate-300 border-slate-400";
+        tooltip = `${dateKey}: Class Cancelled`;
+      }
+
+      weekDays.push({
+        dateKey,
+        label: cursor.toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+        isFuture,
+        colorClass,
+        tooltip,
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    heatmapWeeks.push(weekDays);
+  }
+
+  // Compute Continuous Present Streak (days with active classes)
+  const sortedActiveDates = Object.keys(recordsByDate)
+    .filter((dk) => recordsByDate[dk].some((r) => r.status !== "Cancelled"))
+    .sort((a, b) => (a > b ? -1 : 1));
+
+  let currentStreak = 0;
+  for (const dk of sortedActiveDates) {
+    const activeDay = recordsByDate[dk].filter((r) => r.status !== "Cancelled");
+    const allPresent = activeDay.every((r) => r.status === "Present" || r.status === "Late");
+    if (allPresent) {
+      currentStreak += 1;
+    } else {
+      break;
+    }
+  }
+
+  // =========================================================
+  // 2. TODAY'S PERIOD-BY-PERIOD LIVE TRACKER + SAFE-TO-BUNK
+  // =========================================================
+  const todayDayName = ALL_DAYS[new Date().getDay()];
+  const todaysRoutine = routineSlots.filter((r) => r.dayOfWeek === todayDayName);
+  const todaysRecords = recordsByDate[todayStr] || [];
+
+  const liveTodayPeriods = todaysRoutine.map((slot) => {
+    const matchedRec =
+      todaysRecords.find(
+        (r) => r.subject === slot.subject && r.timeSlot === slot.timeSlot
+      ) || todaysRecords.find((r) => r.subject === slot.subject);
+
+    const subStats = getSubjectStats(slot.subject);
+    const pctIfSkipped =
+      subStats.held + 1 > 0
+        ? Math.round((subStats.attended / (subStats.held + 1)) * 100)
+        : 0;
+    const isSafeToSkip = pctIfSkipped >= 75;
+
+    return {
+      ...slot,
+      status: matchedRec ? matchedRec.status : "Upcoming",
+      cancelReason: matchedRec?.cancelReason,
+      subStats,
+      pctIfSkipped,
+      isSafeToSkip,
+    };
   });
 
+  // =========================================================
+  // 3. MULTI-DAY TRIP / BUNK SIMULATOR
+  // =========================================================
+  const simulateTripImpact = () => {
+    if (!tripStart || !tripEnd || tripEnd < tripStart) return [];
+    const start = new Date(tripStart + "T12:00:00");
+    const end = new Date(tripEnd + "T12:00:00");
+    const extraMissedBySub: Record<string, number> = {};
+
+    const iter = new Date(start);
+    let safetyDays = 0;
+    while (iter <= end && safetyDays < 45) {
+      const dName = ALL_DAYS[iter.getDay()];
+      const dayClasses = routineSlots.filter((r) => r.dayOfWeek === dName);
+      dayClasses.forEach((cls) => {
+        extraMissedBySub[cls.subject] = (extraMissedBySub[cls.subject] || 0) + 1;
+      });
+      iter.setDate(iter.getDate() + 1);
+      safetyDays += 1;
+    }
+
+    return Object.entries(extraMissedBySub).map(([sub, missedInTrip]) => {
+      const { held, attended, pct } = getSubjectStats(sub);
+      const newHeld = held + missedInTrip;
+      const postTripPct = newHeld > 0 ? Math.round((attended / newHeld) * 100) : 0;
+      return {
+        subject: sub,
+        currentPct: pct,
+        missedInTrip,
+        postTripPct,
+      };
+    });
+  };
+
+  const tripSimulationRows = simulateTripImpact();
+
+  // =========================================================
+  // 4. DAY & TIME-SLOT ABSENCE PATTERN INSIGHTS
+  // =========================================================
+  const absentRecords = activeRecords.filter((r) => r.status === "Absent");
+  const dayAbsenceCounts: Record<string, number> = {};
+  const slotAbsenceCounts: Record<string, number> = {};
+
+  absentRecords.forEach((r) => {
+    const dName = ALL_DAYS[new Date(r.date).getDay()];
+    dayAbsenceCounts[dName] = (dayAbsenceCounts[dName] || 0) + 1;
+    const slotLabel = r.timeSlot || "Unspecified Period";
+    slotAbsenceCounts[slotLabel] = (slotAbsenceCounts[slotLabel] || 0) + 1;
+  });
+
+  const topMissedDay = Object.entries(dayAbsenceCounts).sort((a, b) => b[1] - a[1])[0];
+  const topMissedSlot = Object.entries(slotAbsenceCounts).sort((a, b) => b[1] - a[1])[0];
+
+  // =========================================================
+  // 5. CORRECTION REQUEST HANDLER
+  // =========================================================
   const handleCorrectionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeRecord || !reason.trim()) return;
+    if (!selectedRecord || !reason.trim()) return;
     setSubmitting(true);
-    setFeedbackMsg("");
+    setMsg("");
     try {
       await api.post("/corrections", {
-        attendanceId: activeRecord._id,
+        attendanceId: selectedRecord._id,
+        subject: selectedRecord.subject,
+        date: selectedRecord.date,
+        currentStatus: selectedRecord.status,
         reason,
       });
-      setFeedbackMsg(`Correction request for ${activeRecord.subject} sent to faculty!`);
-      setActiveRecord(null);
+      setSelectedRecord(null);
       setReason("");
+      setMsg("Attendance correction request sent to Faculty!");
       loadData();
-    } catch (err: any) {
-      setFeedbackMsg(err.response?.data?.message || "Could not submit correction request.");
+    } catch {
+      setMsg("Failed to submit correction request.");
     } finally {
       setSubmitting(false);
     }
   };
 
+  const hasPendingCorrection = (attId: string) =>
+    corrections.some((c) => c.attendanceId === attId && c.status === "Pending");
+
   return (
     <StudentLayout>
       <div className="space-y-6">
-        {/* Top Overview + Interactive Target Simulator */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* Header & Subject Filter */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">
+              Smart Daily Attendance Tracker & Simulator
+            </h1>
+            <p className="text-sm text-slate-500 mt-1">
+              Live daily period status, 12-week attendance heatmap, safe-to-bunk planner & correction requests
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-extrabold">
+              <Flame className="w-4 h-4 text-orange-500" /> {currentStreak}-Day Present Streak
+            </div>
+            <select
+              value={selectedSubject}
+              onChange={(e) => setSelectedSubject(e.target.value)}
+              className="px-3.5 py-2 bg-white border border-slate-300 rounded-lg text-sm font-medium text-slate-800"
+            >
+              {subjects.map((sub) => (
+                <option key={sub} value={sub}>
+                  {sub === "All" ? "All Subjects" : sub}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* TODAY'S LIVE PERIOD-BY-PERIOD TRACKER + SAFE-TO-BUNK BADGES */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Attendance Analytics & Logs</h1>
-              <p className="text-sm text-slate-500">
-                Attended {attended} out of {total} total lectures
+              <h2 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                <Clock className="w-4 h-4 text-blue-600" /> Today's Period-by-Period Live Tracker (
+                {todayDayName})
+              </h2>
+              <p className="text-xs text-slate-500">
+                Real-time attendance status and Safe-to-Skip impact for every lecture today
               </p>
             </div>
-            <div className="text-left sm:text-right">
-              <span className="text-3xl font-extrabold text-blue-600">{data.percentage}%</span>
-              <p className="text-xs font-medium text-slate-500">Current Aggregate</p>
+            <span className="text-xs font-bold text-slate-600 bg-white px-3 py-1 rounded-lg border border-slate-200 w-fit">
+              {new Date().toLocaleDateString("en-IN", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              })}
+            </span>
+          </div>
+
+          <div className="divide-y divide-slate-200">
+            {liveTodayPeriods.map((period) => (
+              <div
+                key={period._id}
+                className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 text-sm"
+              >
+                <div className="space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-bold">
+                      {period.timeSlot}
+                    </span>
+                    <span className="font-bold text-slate-900">{period.subject}</span>
+                    <span className="text-xs text-slate-500">
+                      (Current: {period.subStats.pct}%)
+                    </span>
+                  </div>
+                  {period.status === "Cancelled" && (
+                    <p className="text-xs text-slate-500">
+                      Note: {period.cancelReason || "Cancelled by Faculty"} (Excluded from held count)
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {period.status === "Upcoming" && (
+                    <span
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold ${
+                        period.isSafeToSkip
+                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          : "bg-amber-50 text-amber-800 border border-amber-200"
+                      }`}
+                    >
+                      {period.isSafeToSkip ? (
+                        <>
+                          <ShieldCheck className="w-3.5 h-3.5" /> Safe to Skip (Stays{" "}
+                          {period.pctIfSkipped}%)
+                        </>
+                      ) : (
+                        <>
+                          <ShieldAlert className="w-3.5 h-3.5" /> Must Attend (Drops to{" "}
+                          {period.pctIfSkipped}%)
+                        </>
+                      )}
+                    </span>
+                  )}
+
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-bold ${
+                      period.status === "Present" || period.status === "Late"
+                        ? "bg-emerald-600 text-white"
+                        : period.status === "Absent"
+                        ? "bg-rose-600 text-white"
+                        : period.status === "Cancelled"
+                        ? "bg-slate-200 text-slate-700"
+                        : "bg-blue-100 text-blue-800"
+                    }`}
+                  >
+                    {period.status === "Upcoming" ? "Upcoming Class" : period.status}
+                  </span>
+                </div>
+              </div>
+            ))}
+            {liveTodayPeriods.length === 0 && (
+              <p className="p-6 text-center text-xs text-slate-400">
+                No classes scheduled in your weekly routine for {todayDayName}.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* GITHUB-STYLE 12-WEEK DAILY ATTENDANCE HEATMAP */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                12-Week Daily Attendance Consistency Heatmap
+              </h2>
+              <p className="text-xs text-slate-500">
+                Hover over any day block to inspect daily class attendance
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold text-slate-600">
+              <span className="inline-flex items-center gap-1">
+                <span className="w-3 h-3 rounded-xs bg-emerald-500 inline-block" /> Full Present
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-3 h-3 rounded-xs bg-amber-400 inline-block" /> Partial
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-3 h-3 rounded-xs bg-rose-500 inline-block" /> Absent
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-3 h-3 rounded-xs bg-blue-500 inline-block" /> Approved Leave
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-3 h-3 rounded-xs bg-slate-100 border border-slate-300 inline-block" />{" "}
+                No Class
+              </span>
             </div>
           </div>
 
-          {/* Interactive Target Selector */}
-          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-bold uppercase text-slate-700 flex items-center gap-1.5">
-                <Target className="w-4 h-4 text-blue-600" /> Set Attendance Target Goal:
-              </span>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {[60, 70, 75, 80, 85].map((goal) => (
-                  <button
-                    key={goal}
-                    type="button"
-                    onClick={() => setTargetPct(goal)}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                      targetPct === goal
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "bg-white text-slate-700 border border-slate-300 hover:bg-slate-100"
-                    }`}
-                  >
-                    {goal}%
-                  </button>
-                ))}
+          <div className="overflow-x-auto pb-2">
+            <div className="inline-flex gap-1.5">
+              <div className="flex flex-col justify-between text-[10px] font-bold text-slate-400 pr-1 py-0.5">
+                <span>Sun</span>
+                <span>Tue</span>
+                <span>Thu</span>
+                <span>Sat</span>
               </div>
-            </div>
-            <div
-              className={`p-3 rounded-lg text-xs font-medium flex items-start gap-2 ${
-                isShort
-                  ? "bg-amber-50 text-amber-900 border border-amber-200"
-                  : "bg-emerald-50 text-emerald-900 border border-emerald-200"
-              }`}
-            >
-              {isShort ? (
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              ) : (
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-              )}
-              <span>{targetMessage}</span>
+              {heatmapWeeks.map((week, wIdx) => (
+                <div key={wIdx} className="flex flex-col gap-1.5">
+                  {week.map((day) => (
+                    <div
+                      key={day.dateKey}
+                      title={day.tooltip}
+                      className={`w-5 h-5 rounded-sm border transition-transform hover:scale-125 cursor-pointer ${day.colorClass}`}
+                    />
+                  ))}
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* Subject-Wise Breakdown Grid */}
-        {subjectStats.length > 0 && (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {subjectStats.map((sub) => {
-              const subPct = Math.round((sub.present / sub.total) * 100);
-              const belowGoal = subPct < targetPct;
-              return (
-                <div key={sub.subject} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
-                      <BookOpen className="w-4 h-4 text-blue-600" /> {sub.subject}
-                    </span>
-                    <span
-                      className={`text-xs font-extrabold px-2 py-0.5 rounded-full ${
-                        belowGoal
-                          ? "bg-red-50 text-red-700 border border-red-200"
-                          : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      }`}
-                    >
-                      {subPct}%
-                    </span>
-                  </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${belowGoal ? "bg-red-500" : "bg-emerald-500"}`}
-                      style={{ width: `${subPct}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Present: {sub.present} / {sub.total} lectures
-                  </p>
-                </div>
-              );
-            })}
+        {/* Interactive Target Attendance Calculator Card */}
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-2 font-bold text-slate-900">
+              <Target className="w-5 h-5 text-blue-600" /> Interactive Attendance Target Calculator
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {[60, 70, 75, 80, 85].map((goal) => (
+                <button
+                  key={goal}
+                  type="button"
+                  onClick={() => setTargetPct(goal)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                    targetPct === goal
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  }`}
+                >
+                  {goal}%
+                </button>
+              ))}
+              <div className="flex items-center gap-1 ml-1">
+                <span className="text-xs text-slate-500">Custom:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={99}
+                  value={targetPct}
+                  onChange={(e) => setTargetPct(Number(e.target.value) || 75)}
+                  className="w-16 px-2 py-1 border border-slate-300 rounded-lg text-xs font-bold text-center"
+                />
+                <span className="text-xs font-bold text-slate-600">%</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-4">
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+              <p className="text-xs font-semibold text-slate-500 uppercase">Current Standing</p>
+              <p className="text-3xl font-extrabold text-blue-600 mt-1">{currentPct}%</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Attended {presentCount} of {totalClasses} active lectures
+              </p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
+              <p className="text-xs font-semibold text-slate-500 uppercase">
+                Target Goal ({targetPct}%)
+              </p>
+              <p
+                className={`text-3xl font-extrabold mt-1 ${
+                  currentPct < targetPct ? "text-amber-600" : "text-emerald-600"
+                }`}
+              >
+                {currentPct < targetPct ? `+${classesNeeded} Needed` : "Goal Achieved"}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                {currentPct < targetPct
+                  ? `Attend next ${classesNeeded} class${classesNeeded > 1 ? "es" : ""} in a row`
+                  : `You have a ${canSkip}-class safety margin`}
+              </p>
+            </div>
+
+            <div
+              className={`p-4 rounded-xl border flex items-start gap-2.5 ${
+                currentPct < targetPct && totalClasses > 0
+                  ? "bg-amber-50 border-amber-200 text-amber-900"
+                  : "bg-emerald-50 border-emerald-200 text-emerald-900"
+              }`}
+            >
+              {currentPct < targetPct && totalClasses > 0 ? (
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+              )}
+              <div className="text-xs leading-relaxed">
+                <p className="font-bold text-sm mb-0.5">
+                  {totalClasses === 0
+                    ? "No Lectures Logged Yet"
+                    : currentPct < targetPct
+                    ? "Action Required"
+                    : "Safe Zone"}
+                </p>
+                {totalClasses === 0
+                  ? "Your target projection will update automatically once faculty records attendance."
+                  : currentPct < targetPct
+                  ? `Do not miss upcoming lectures. Attending ${classesNeeded} consecutive class${
+                      classesNeeded > 1 ? "es" : ""
+                    } will bring ${selectedSubject === "All" ? "overall" : selectedSubject} attendance to ${targetPct}%.`
+                  : `You can safely miss up to ${canSkip} upcoming lecture${
+                      canSkip !== 1 ? "s" : ""
+                    } without dropping below ${targetPct}%.`}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* MULTI-DAY TRIP / LEAVE SIMULATOR + ABSENCE PATTERN INSIGHTS */}
+        <div className="grid lg:grid-cols-3 gap-6">
+          {/* Trip / Leave Impact Simulator */}
+          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                  <Compass className="w-4 h-4 text-indigo-600" /> Planned Leave / Trip Attendance
+                  Simulator
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Select a date range to preview how missing those days affects every subject
+                </p>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <input
+                  type="date"
+                  value={tripStart}
+                  onChange={(e) => setTripStart(e.target.value)}
+                  className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
+                />
+                <span className="font-bold text-slate-400">to</span>
+                <input
+                  type="date"
+                  value={tripEnd}
+                  onChange={(e) => setTripEnd(e.target.value)}
+                  className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg"
+                />
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase">
+                  <tr>
+                    <th className="py-2.5 px-4">Subject</th>
+                    <th className="py-2.5 px-4">Current %</th>
+                    <th className="py-2.5 px-4">Classes Missed</th>
+                    <th className="py-2.5 px-4">Post-Leave %</th>
+                    <th className="py-2.5 px-4">Verdict</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {tripSimulationRows.map((row) => (
+                    <tr key={row.subject}>
+                      <td className="py-2.5 px-4 font-bold text-slate-900">{row.subject}</td>
+                      <td className="py-2.5 px-4 text-slate-700">{row.currentPct}%</td>
+                      <td className="py-2.5 px-4 font-semibold text-rose-600">
+                        -{row.missedInTrip}
+                      </td>
+                      <td className="py-2.5 px-4 font-extrabold text-slate-900">
+                        {row.postTripPct}%
+                      </td>
+                      <td className="py-2.5 px-4">
+                        <span
+                          className={`px-2 py-0.5 rounded-full font-bold ${
+                            row.postTripPct >= 75
+                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              : "bg-rose-50 text-rose-700 border border-rose-200"
+                          }`}
+                        >
+                          {row.postTripPct >= 75 ? "Safe (≥75%)" : "Drops Below 75%"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {tripSimulationRows.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-6 text-center text-slate-400">
+                        No scheduled classes fall inside the selected date range.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Day & Time-Slot Absence Pattern Insights */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4 flex flex-col justify-between">
+            <div className="space-y-3">
+              <h2 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                <TrendingDown className="w-4 h-4 text-rose-600" /> Absence Pattern Analytics
+              </h2>
+              <p className="text-xs text-slate-500">
+                Identifies which weekday and period slot cause the most attendance loss
+              </p>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                <p className="text-[11px] font-bold uppercase text-slate-400">Most Missed Weekday</p>
+                <p className="text-base font-extrabold text-slate-900">
+                  {topMissedDay ? `${topMissedDay[0]} (${topMissedDay[1]} Absents)` : "Zero Absents!"}
+                </p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                <p className="text-[11px] font-bold uppercase text-slate-400">
+                  Most Missed Time Slot
+                </p>
+                <p className="text-sm font-extrabold text-slate-900">
+                  {topMissedSlot
+                    ? `${topMissedSlot[0]} (${topMissedSlot[1]} Absents)`
+                    : "100% Punctual"}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-blue-50/70 border border-blue-200 text-[11px] text-blue-900 font-medium">
+              Tip: Keep an eye on morning Period 1 slots—attending them consistently protects your
+              75% buffer across all subjects.
+            </div>
+          </div>
+        </div>
+
+        {msg && (
+          <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm font-medium">
+            {msg}
           </div>
         )}
 
-        {feedbackMsg && (
-          <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-sm font-medium">
-            {feedbackMsg}
-          </div>
-        )}
-
-        {/* Correction Request Box */}
-        {activeRecord && (
+        {/* Correction Request Modal Box */}
+        {selectedRecord && (
           <form
             onSubmit={handleCorrectionSubmit}
-            className="bg-white p-5 rounded-2xl border-2 border-blue-500 shadow-md space-y-3"
+            className="bg-blue-50/70 p-5 rounded-2xl border border-blue-200 space-y-3"
           >
             <div className="flex items-center justify-between">
-              <h3 className="font-bold text-slate-900 text-sm">
-                Request Attendance Correction — {activeRecord.subject} (
-                {new Date(activeRecord.date).toLocaleDateString()})
-              </h3>
+              <p className="text-sm font-bold text-blue-950">
+                Request Attendance Correction: {selectedRecord.subject} (
+                {new Date(selectedRecord.date).toLocaleDateString("en-IN")})
+              </p>
               <button
                 type="button"
-                onClick={() => setActiveRecord(null)}
+                onClick={() => setSelectedRecord(null)}
                 className="text-xs text-slate-500 hover:text-slate-800"
               >
                 Cancel
               </button>
             </div>
-            <p className="text-xs text-slate-500">
-              Your name, roll number, department, and semester will be automatically sent to the faculty for review.
-            </p>
             <div className="flex flex-col sm:flex-row gap-2">
               <input
                 type="text"
                 required
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="Explain why you were marked absent (e.g. Attended lab session, biometric missed)..."
-                className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm"
+                placeholder="Explain why you should be marked Present (e.g. Attended lab / Medical leave / Roll call missed)..."
+                className="flex-1 px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm"
               />
               <button
                 type="submit"
                 disabled={submitting}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold inline-flex items-center gap-1.5"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold inline-flex items-center gap-1.5"
               >
-                <Send className="w-4 h-4" /> {submitting ? "Sending..." : "Send to Teacher"}
+                <Send className="w-4 h-4" /> {submitting ? "Sending..." : "Submit to Teacher"}
               </button>
             </div>
           </form>
         )}
 
-        {/* Date-Wise & Subject-Wise Filterable Attendance Table */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Filter className="w-4 h-4 text-blue-600" /> Date-Wise & Subject-Wise Log ({filteredRecords.length})
-            </h2>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
-              />
-              <select
-                value={selectedSubject}
-                onChange={(e) => setSelectedSubject(e.target.value)}
-                className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
-              >
-                {uniqueSubjects.map((sub) => (
-                  <option key={sub} value={sub}>
-                    {sub === "All" ? "All Subjects" : sub}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
-              >
-                <option value="All">All Status</option>
-                <option value="Present">Present</option>
-                <option value="Absent">Absent</option>
-                <option value="Late">Late</option>
-              </select>
-              {(selectedDate || selectedSubject !== "All" || selectedStatus !== "All") && (
-                <button
-                  onClick={() => {
-                    setSelectedDate("");
-                    setSelectedSubject("All");
-                    setSelectedStatus("All");
-                  }}
-                  className="text-xs text-blue-600 font-semibold hover:underline px-2"
-                >
-                  Reset
-                </button>
-              )}
-            </div>
+        {/* Date-Wise Attendance Log Table */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-semibold text-slate-800 flex items-center gap-2">
+            <CalendarCheck className="w-5 h-5 text-blue-600" /> Date-Wise Attendance Register (
+            {filteredAllRecords.length} entries)
           </div>
-
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
                 <tr>
                   <th className="py-3 px-4 font-semibold">Date</th>
-                  <th className="py-3 px-4 font-semibold">Subject</th>
+                  <th className="py-3 px-4 font-semibold">Subject & Period</th>
                   <th className="py-3 px-4 font-semibold">Status</th>
-                  <th className="py-3 px-4 font-semibold">Correction Action</th>
+                  <th className="py-3 px-4 font-semibold text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {filteredRecords.map((r) => {
-                  const existingReq = corrections.find((c) => c.attendanceId === r._id);
-                  return (
-                    <tr key={r._id} className="hover:bg-slate-50/60">
-                      <td className="py-3 px-4 text-slate-700">
-                        {new Date(r.date).toLocaleDateString("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                        })}
-                      </td>
-                      <td className="py-3 px-4 font-medium text-slate-900">{r.subject}</td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                            r.status === "Present"
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : r.status === "Late"
-                              ? "bg-amber-50 text-amber-700 border border-amber-200"
-                              : "bg-red-50 text-red-700 border border-red-200"
-                          }`}
-                        >
-                          {r.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        {existingReq ? (
-                          <span
-                            className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                              existingReq.status === "Approved"
-                                ? "bg-emerald-50 text-emerald-700"
-                                : existingReq.status === "Rejected"
-                                ? "bg-red-50 text-red-700"
-                                : "bg-amber-50 text-amber-700"
-                            }`}
-                          >
-                            {existingReq.status === "Pending" && <Clock className="w-3 h-3" />}
-                            {existingReq.status === "Approved" && <CheckCircle2 className="w-3 h-3" />}
-                            {existingReq.status === "Rejected" && <XCircle className="w-3 h-3" />}
-                            Request {existingReq.status}
+                {filteredAllRecords.map((r) => (
+                  <tr key={r._id} className="hover:bg-slate-50/60">
+                    <td className="py-3 px-4 text-slate-600">
+                      {new Date(r.date).toLocaleDateString("en-IN", {
+                        weekday: "short",
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </td>
+                    <td className="py-3 px-4 font-medium text-slate-900">
+                      {r.subject}{" "}
+                      {r.timeSlot && <span className="text-xs text-slate-400">({r.timeSlot})</span>}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-xs font-semibold inline-flex items-center gap-1 ${
+                          r.status === "Present"
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : r.status === "Late"
+                            ? "bg-amber-50 text-amber-700 border border-amber-200"
+                            : r.status === "Cancelled"
+                            ? "bg-slate-100 text-slate-600 border border-slate-200"
+                            : "bg-red-50 text-red-700 border border-red-200"
+                        }`}
+                      >
+                        {r.status === "Cancelled" && <Ban className="w-3 h-3" />}
+                        {r.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      {r.status === "Absent" &&
+                        (hasPendingCorrection(r._id) ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600">
+                            <Clock className="w-3.5 h-3.5" /> Correction Pending
                           </span>
-                        ) : r.status !== "Present" ? (
+                        ) : (
                           <button
-                            onClick={() => setActiveRecord(r)}
-                            className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline"
+                            type="button"
+                            onClick={() => setSelectedRecord(r)}
+                            className="text-xs font-semibold text-blue-600 hover:underline"
                           >
                             Request Correction
                           </button>
-                        ) : (
-                          <span className="text-xs text-slate-400">Verified</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filteredRecords.length === 0 && (
+                        ))}
+                    </td>
+                  </tr>
+                ))}
+                {filteredAllRecords.length === 0 && (
                   <tr>
                     <td colSpan={4} className="py-8 text-center text-slate-400">
-                      No matching attendance records found.
+                      No attendance records found for this filter.
                     </td>
                   </tr>
                 )}
