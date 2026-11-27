@@ -28,6 +28,10 @@ import {
   QrCode,
   RefreshCw,
   StopCircle,
+  LayoutGrid,
+  List,
+  CopyCheck,
+  Ban,
 } from "lucide-react";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -98,11 +102,16 @@ export const TeacherPanel: React.FC = () => {
 
   const [dayOfWeek, setDayOfWeek] = useState<string>(getDayFromDateStr(todayStr));
 
-  // Attendance Slot & Proxy Mode
+  // Attendance Slot, Proxy Mode, Bubble Grid & Class Cancelled State
   const [proxyMode, setProxyMode] = useState<boolean>(false);
   const [selectedSlotId, setSelectedSlotId] = useState<string>("");
   const [proxySubject, setProxySubject] = useState<string>("");
   const [customSubject, setCustomSubject] = useState<string>("");
+  const [attendanceView, setAttendanceView] = useState<"bubbles" | "table">("bubbles");
+  const [copyingPrev, setCopyingPrev] = useState<boolean>(false);
+  const [showCancelBox, setShowCancelBox] = useState<boolean>(false);
+  const [cancelReason, setCancelReason] = useState<string>("");
+  const [cancellingClass, setCancellingClass] = useState<boolean>(false);
 
   // Master Weekly Routine Builder State
   const [subjectPool, setSubjectPool] = useState<string[]>([]);
@@ -444,6 +453,14 @@ export const TeacherPanel: React.FC = () => {
     setBulkStatus(updated);
   };
 
+  const cycleStudentStatus = (studentId: string) => {
+    setBulkStatus((prev) => {
+      const current = prev[studentId] || "Present";
+      const next = current === "Present" ? "Absent" : current === "Absent" ? "Late" : "Present";
+      return { ...prev, [studentId]: next };
+    });
+  };
+
   const markLeaveStudentsPresent = () => {
     const updated = { ...bulkStatus };
     let count = 0;
@@ -459,6 +476,73 @@ export const TeacherPanel: React.FC = () => {
         ? `Marked ${count} student(s) on Approved Leave as Present!`
         : "No students in this class have an approved leave on this date."
     );
+  };
+
+  // 1-Click Copy Previous Period Attendance on Same Date
+  const handleCopyPreviousPeriod = async () => {
+    setCopyingPrev(true);
+    setMsg("");
+    try {
+      const { data } = await api.get(`/attendance/by-date?date=${selectedDate}`);
+      const validRecs = (data || []).filter((r: any) => r.status !== "Cancelled");
+      if (validRecs.length === 0) {
+        setMsg(`No previous period attendance logged on ${selectedDate} to copy.`);
+        return;
+      }
+      const updated = { ...bulkStatus };
+      let matchedCount = 0;
+      classStudents.forEach((s) => {
+        const found = validRecs.find((r: any) => String(r.studentId) === String(s._id));
+        if (
+          found &&
+          (found.status === "Present" || found.status === "Absent" || found.status === "Late")
+        ) {
+          updated[s._id] = found.status;
+          matchedCount += 1;
+        }
+      });
+      if (matchedCount > 0) {
+        setBulkStatus(updated);
+        setMsg(
+          `Copied previous period status for ${matchedCount} student(s) on ${selectedDate}!`
+        );
+      } else {
+        setMsg(`No matching records found for ${department} Sem ${semester} on ${selectedDate}.`);
+      }
+    } catch {
+      setMsg("Unable to fetch previous period records.");
+    } finally {
+      setCopyingPrev(false);
+    }
+  };
+
+  // Mark Scheduled Class Cancelled
+  const handleCancelClassSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSubjectName) {
+      setMsg("Please select or enter a subject first.");
+      return;
+    }
+    setCancellingClass(true);
+    setMsg("");
+    try {
+      const { data } = await api.post("/attendance/cancel-class", {
+        department,
+        semester,
+        subject: activeSubjectName,
+        timeSlot: activeTimeSlot,
+        date: selectedDate,
+        reason: cancelReason.trim() || "Class Cancelled by Faculty",
+      });
+      setShowCancelBox(false);
+      setCancelReason("");
+      setMsg(data.message);
+      api.get("/attendance/all").then((res) => setAttendanceLogs(res.data));
+    } catch (err: any) {
+      setMsg(err.response?.data?.message || "Failed to mark class cancelled.");
+    } finally {
+      setCancellingClass(false);
+    }
   };
 
   const handleBulkSubmit = async () => {
@@ -686,7 +770,6 @@ export const TeacherPanel: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  // Remaining time string for Active Live OTP Session
   const getRemainingCountdown = (expiresAtStr: string): string => {
     const diffMs = Math.max(0, new Date(expiresAtStr).getTime() - nowTick);
     const totalSec = Math.floor(diffMs / 1000);
@@ -694,6 +777,13 @@ export const TeacherPanel: React.FC = () => {
     const secs = totalSec % 60;
     return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
+
+  // Live Summary Counts for Attendance Register
+  const presentInView = classStudents.filter(
+    (s) => (bulkStatus[s._id] || "Present") === "Present"
+  ).length;
+  const absentInView = classStudents.filter((s) => bulkStatus[s._id] === "Absent").length;
+  const lateInView = classStudents.filter((s) => bulkStatus[s._id] === "Late").length;
 
   return (
     <TeacherLayout>
@@ -765,7 +855,7 @@ export const TeacherPanel: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Faculty Classroom & Academic Hub</h1>
             <p className="text-sm text-slate-500 mt-1">
-              Live QR/OTP attendance, leave-aware registers, weekly timetable, assignments, leaves & batch marks
+              10-second bubble attendance, live QR/OTP sessions, period copy, class cancellations & batch grades
             </p>
           </div>
 
@@ -954,7 +1044,6 @@ export const TeacherPanel: React.FC = () => {
         {/* TAB 0: LIVE CLASSROOM QR / 4-DIGIT OTP ATTENDANCE PROJECTOR */}
         {activeTab === "live-otp" && (
           <div className="space-y-6">
-            {/* Start New Session Card */}
             {!activeLiveSession ? (
               <form
                 onSubmit={handleStartLiveSession}
@@ -1031,7 +1120,6 @@ export const TeacherPanel: React.FC = () => {
                 </button>
               </form>
             ) : (
-              /* Active Live Projector Display */
               <div className="bg-slate-900 text-white rounded-2xl border-2 border-emerald-500 shadow-xl p-6 sm:p-8 space-y-6">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                   <div className="space-y-2">
@@ -1051,7 +1139,6 @@ export const TeacherPanel: React.FC = () => {
                     </p>
                   </div>
 
-                  {/* Big Projector OTP & QR Card */}
                   <div className="flex items-center gap-5 bg-white text-slate-900 px-6 py-4 rounded-2xl shadow-lg">
                     <QrCode className="w-16 h-16 text-slate-900 shrink-0" />
                     <div>
@@ -1065,7 +1152,6 @@ export const TeacherPanel: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Live Checked-In Students Feed */}
                 <div className="bg-slate-800/80 rounded-xl border border-slate-700 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold uppercase tracking-wider text-emerald-300">
@@ -1100,7 +1186,6 @@ export const TeacherPanel: React.FC = () => {
                   )}
                 </div>
 
-                {/* Close Session Controls */}
                 <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
                   <button
                     type="button"
@@ -1122,7 +1207,6 @@ export const TeacherPanel: React.FC = () => {
               </div>
             )}
 
-            {/* Past Live Sessions History */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-slate-200 bg-slate-50/70 font-bold text-slate-900 text-sm">
                 Recent Live Classroom Sessions ({sessions.length})
@@ -1165,7 +1249,7 @@ export const TeacherPanel: React.FC = () => {
           </div>
         )}
 
-        {/* TAB 1: LEAVE-AWARE ROUTINE & PERIOD-WISE BULK ATTENDANCE */}
+        {/* TAB 1: 10-SECOND ROLL-NUMBER BUBBLE GRID + TABLE ATTENDANCE + COPY PERIOD + CANCEL CLASS */}
         {activeTab === "attendance" && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-slate-200 bg-slate-50/70 space-y-4">
@@ -1181,7 +1265,7 @@ export const TeacherPanel: React.FC = () => {
                       <select
                         value={selectedSlotId}
                         onChange={(e) => setSelectedSlotId(e.target.value)}
-                        className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm min-w-[280px]"
+                        className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm min-w-[270px]"
                       >
                         {todayScheduledSlots.length > 0 ? (
                           todayScheduledSlots.map((slot) => (
@@ -1197,7 +1281,7 @@ export const TeacherPanel: React.FC = () => {
                       <select
                         value={proxySubject}
                         onChange={(e) => setProxySubject(e.target.value)}
-                        className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm min-w-[260px]"
+                        className="px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm min-w-[250px]"
                       >
                         {allSemesterSubjects.map((sub) => (
                           <option key={sub} value={sub}>
@@ -1235,39 +1319,105 @@ export const TeacherPanel: React.FC = () => {
                         setProxySubject("__custom__");
                       }
                     }}
-                    className={`px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 border transition ${
+                    className={`px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 border transition ${
                       proxyMode
                         ? "bg-amber-50 text-amber-800 border-amber-300"
                         : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
                     }`}
                   >
                     <Shuffle className="w-3.5 h-3.5" />
-                    {proxyMode ? "Proxy / Flexible Mode ON" : "Take Other Teacher's / Proxy Class"}
+                    {proxyMode ? "Proxy Mode ON" : "Proxy / Extra Class"}
                   </button>
+
+                  {activeSubjectName && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCancelBox(!showCancelBox)}
+                      className="px-3 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition"
+                    >
+                      <Ban className="w-3.5 h-3.5 text-rose-600" />
+                      {showCancelBox ? "Close Cancel" : "Cancel Class"}
+                    </button>
+                  )}
 
                   <button
                     onClick={handleBulkSubmit}
                     disabled={submitting || classStudents.length === 0 || !activeSubjectName}
                     className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold shadow-sm"
                   >
-                    {submitting ? "Saving..." : `Save Register (${classStudents.length})`}
+                    {submitting
+                      ? "Saving..."
+                      : `Save Register (${presentInView}P / ${absentInView}A)`}
                   </button>
                 </div>
               </div>
 
-              {/* Quick Bulk Controls, Leave Sync & Defaulter Filter */}
-              <div className="pt-3 border-t border-slate-200/80 flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+              {/* Optional Class Cancellation Reason Bar */}
+              {showCancelBox && (
+                <form
+                  onSubmit={handleCancelClassSubmit}
+                  className="p-3.5 rounded-xl bg-rose-50/70 border border-rose-200 flex flex-col sm:flex-row items-center gap-2"
+                >
+                  <span className="text-xs font-bold text-rose-900 whitespace-nowrap">
+                    Cancel {activeSubjectName} on {selectedDate}:
+                  </span>
+                  <input
+                    type="text"
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                    placeholder="Reason (e.g. Faculty on conference / Guest seminar / Lab maintenance)..."
+                    className="flex-1 w-full px-3 py-1.5 bg-white border border-rose-200 rounded-lg text-xs"
+                  />
+                  <button
+                    type="submit"
+                    disabled={cancellingClass}
+                    className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold whitespace-nowrap"
+                  >
+                    {cancellingClass ? "Cancelling..." : "Confirm Class Cancelled"}
+                  </button>
+                </form>
+              )}
+
+              {/* Quick Bulk Controls, View Mode Toggle & Copy Previous Period */}
+              <div className="pt-3 border-t border-slate-200/80 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <div className="relative w-60">
+                  {/* View Switcher: 10-Sec Bubble Grid vs Detailed Table */}
+                  <div className="inline-flex rounded-lg bg-slate-200/70 p-0.5 border border-slate-300">
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceView("bubbles")}
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold inline-flex items-center gap-1 transition ${
+                        attendanceView === "bubbles"
+                          ? "bg-white text-blue-700 shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" /> 10-Sec Bubble Grid
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceView("table")}
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold inline-flex items-center gap-1 transition ${
+                        attendanceView === "table"
+                          ? "bg-white text-blue-700 shadow-2xs"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <List className="w-3.5 h-3.5" /> Detailed Table
+                    </button>
+                  </div>
+
+                  <div className="relative w-52">
                     <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2" />
                     <input
                       type="text"
                       value={studentSearch}
                       onChange={(e) => setStudentSearch(e.target.value)}
-                      placeholder="Filter by name or roll no..."
+                      placeholder="Name or roll no..."
                       className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
                     />
                   </div>
+
                   <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
                     <input
                       type="checkbox"
@@ -1275,12 +1425,21 @@ export const TeacherPanel: React.FC = () => {
                       onChange={(e) => setOnlyDefaulters(e.target.checked)}
                       className="rounded border-slate-300 text-blue-600"
                     />
-                    Only &lt;75% Attendance Students
+                    Only &lt;75%
                   </label>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-slate-500 font-medium">Quick Mark:</span>
+                  <button
+                    type="button"
+                    disabled={copyingPrev}
+                    onClick={handleCopyPreviousPeriod}
+                    className="px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-200 text-xs font-semibold hover:bg-blue-100 inline-flex items-center gap-1"
+                    title="Copy attendance from an earlier period on the same date"
+                  >
+                    <CopyCheck className="w-3.5 h-3.5" />
+                    {copyingPrev ? "Copying..." : "Copy Previous Period"}
+                  </button>
                   <button
                     type="button"
                     onClick={() => markAllAs("Present")}
@@ -1306,92 +1465,191 @@ export const TeacherPanel: React.FC = () => {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                  <tr>
-                    <th className="py-3 px-4 font-semibold">Student (Click for 360° Profile)</th>
-                    <th className="py-3 px-4 font-semibold">Roll Number</th>
-                    <th className="py-3 px-4 font-semibold">Overall % & Leave Status</th>
-                    <th className="py-3 px-4 font-semibold">Attendance Status ({selectedDate})</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
-                  {classStudents.map((s) => {
-                    const attPct = getStudentAttendancePct(s._id);
-                    const approvedLeave = getApprovedLeaveForDate(s._id, selectedDate);
-                    return (
-                      <tr key={s._id} className="hover:bg-slate-50/60">
-                        <td className="py-3 px-4">
-                          <button
-                            type="button"
-                            onClick={() => openStudentDossier(s._id)}
-                            className="font-semibold text-slate-900 hover:text-blue-600 inline-flex items-center gap-1.5 text-left"
-                          >
-                            {s.name} <Eye className="w-3.5 h-3.5 text-slate-400" />
-                          </button>
-                        </td>
-                        <td className="py-3 px-4 text-slate-600">{s.rollNumber || s.email}</td>
-                        <td className="py-3 px-4">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {attPct !== null ? (
+            {/* Live Attendance Tally Strip */}
+            <div className="px-4 py-2.5 bg-white border-b border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="text-slate-500">
+                {attendanceView === "bubbles"
+                  ? "Tap any Roll Number card to cycle: Present (Green) → Absent (Red) → Late (Amber)"
+                  : "Select individual status per student below"}
+              </span>
+              <div className="flex items-center gap-3 font-bold">
+                <span className="text-emerald-700">Present: {presentInView}</span>
+                <span className="text-rose-700">Absent: {absentInView}</span>
+                <span className="text-amber-700">Late: {lateInView}</span>
+              </div>
+            </div>
+
+            {/* VIEW MODE A: 10-SECOND ROLL-NUMBER BUBBLE GRID */}
+            {attendanceView === "bubbles" ? (
+              <div className="p-5">
+                {classStudents.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+                    {classStudents.map((s) => {
+                      const st = bulkStatus[s._id] || "Present";
+                      const attPct = getStudentAttendancePct(s._id);
+                      const approvedLeave = getApprovedLeaveForDate(s._id, selectedDate);
+                      const rollLabel =
+                        s.rollNumber || s.name?.split(" ")[0] || "STU";
+
+                      const cardStyle =
+                        st === "Present"
+                          ? "bg-emerald-50/90 border-emerald-400 text-emerald-950 hover:bg-emerald-100"
+                          : st === "Absent"
+                          ? "bg-rose-50 border-rose-500 text-rose-950 hover:bg-rose-100 ring-2 ring-rose-200"
+                          : "bg-amber-50 border-amber-400 text-amber-950 hover:bg-amber-100";
+
+                      const badgeStyle =
+                        st === "Present"
+                          ? "bg-emerald-600 text-white"
+                          : st === "Absent"
+                          ? "bg-rose-600 text-white"
+                          : "bg-amber-500 text-white";
+
+                      return (
+                        <div
+                          key={s._id}
+                          onClick={() => cycleStudentStatus(s._id)}
+                          className={`relative p-3 rounded-xl border-2 cursor-pointer select-none transition transform active:scale-95 flex flex-col justify-between min-h-[104px] ${cardStyle}`}
+                        >
+                          <div className="flex items-start justify-between gap-1">
+                            <span className="font-mono text-base font-black tracking-tight truncate">
+                              {rollLabel}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openStudentDossier(s._id);
+                              }}
+                              className="p-1 rounded-md bg-white/70 hover:bg-white text-slate-600"
+                              title="Inspect 360° Student Dossier"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          <p className="text-xs font-semibold truncate mt-1">{s.name}</p>
+
+                          <div className="flex items-center justify-between gap-1 mt-2 pt-1.5 border-t border-black/5">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${badgeStyle}`}>
+                              {st}
+                            </span>
+                            {approvedLeave ? (
                               <span
-                                className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                                  attPct < 75
-                                    ? "bg-red-50 text-red-700 border border-red-200"
-                                    : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                className="px-1.5 py-0.5 rounded bg-indigo-600 text-white text-[9px] font-bold"
+                                title={approvedLeave.reason}
+                              >
+                                LEAVE
+                              </span>
+                            ) : attPct !== null ? (
+                              <span
+                                className={`text-[10px] font-bold ${
+                                  attPct < 75 ? "text-rose-700" : "text-slate-600"
                                 }`}
                               >
                                 {attPct}%
                               </span>
-                            ) : (
-                              <span className="text-xs text-slate-400">New</span>
-                            )}
-                            {approvedLeave && (
-                              <span
-                                className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"
-                                title={approvedLeave.reason}
-                              >
-                                On {approvedLeave.leaveType}
-                              </span>
-                            )}
+                            ) : null}
                           </div>
-                        </td>
-                        <td className="py-3 px-4">
-                          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
-                            {(["Present", "Absent", "Late"] as const).map((st) => (
-                              <button
-                                key={st}
-                                type="button"
-                                onClick={() => setBulkStatus((prev) => ({ ...prev, [s._id]: st }))}
-                                className={`px-3 py-1 text-xs font-semibold transition ${
-                                  bulkStatus[s._id] === st
-                                    ? st === "Present"
-                                      ? "bg-emerald-600 text-white"
-                                      : st === "Absent"
-                                      ? "bg-red-600 text-white"
-                                      : "bg-amber-500 text-white"
-                                    : "bg-white text-slate-600 hover:bg-slate-50"
-                                }`}
-                              >
-                                {st}
-                              </button>
-                            ))}
-                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="py-8 text-center text-sm text-slate-400">
+                    No matching students found in {department} Semester {semester}.
+                  </p>
+                )}
+              </div>
+            ) : (
+              /* VIEW MODE B: DETAILED TABLE VIEW */
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                    <tr>
+                      <th className="py-3 px-4 font-semibold">Student (Click for 360° Profile)</th>
+                      <th className="py-3 px-4 font-semibold">Roll Number</th>
+                      <th className="py-3 px-4 font-semibold">Overall % & Leave Status</th>
+                      <th className="py-3 px-4 font-semibold">Attendance Status ({selectedDate})</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {classStudents.map((s) => {
+                      const attPct = getStudentAttendancePct(s._id);
+                      const approvedLeave = getApprovedLeaveForDate(s._id, selectedDate);
+                      return (
+                        <tr key={s._id} className="hover:bg-slate-50/60">
+                          <td className="py-3 px-4">
+                            <button
+                              type="button"
+                              onClick={() => openStudentDossier(s._id)}
+                              className="font-semibold text-slate-900 hover:text-blue-600 inline-flex items-center gap-1.5 text-left"
+                            >
+                              {s.name} <Eye className="w-3.5 h-3.5 text-slate-400" />
+                            </button>
+                          </td>
+                          <td className="py-3 px-4 text-slate-600">{s.rollNumber || s.email}</td>
+                          <td className="py-3 px-4">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {attPct !== null ? (
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                                    attPct < 75
+                                      ? "bg-red-50 text-red-700 border border-red-200"
+                                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  }`}
+                                >
+                                  {attPct}%
+                                </span>
+                              ) : (
+                                <span className="text-xs text-slate-400">New</span>
+                              )}
+                              {approvedLeave && (
+                                <span
+                                  className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                  title={approvedLeave.reason}
+                                >
+                                  On {approvedLeave.leaveType}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+                              {(["Present", "Absent", "Late"] as const).map((st) => (
+                                <button
+                                  key={st}
+                                  type="button"
+                                  onClick={() => setBulkStatus((prev) => ({ ...prev, [s._id]: st }))}
+                                  className={`px-3 py-1 text-xs font-semibold transition ${
+                                    bulkStatus[s._id] === st
+                                      ? st === "Present"
+                                        ? "bg-emerald-600 text-white"
+                                        : st === "Absent"
+                                        ? "bg-red-600 text-white"
+                                        : "bg-amber-500 text-white"
+                                      : "bg-white text-slate-600 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  {st}
+                                </button>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {classStudents.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="py-8 text-center text-slate-400">
+                          No matching students found in {department} Semester {semester}.
                         </td>
                       </tr>
-                    );
-                  })}
-                  {classStudents.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-slate-400">
-                        No matching students found in {department} Semester {semester}.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -2211,6 +2469,8 @@ export const TeacherPanel: React.FC = () => {
                               ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
                               : log.status === "Late"
                               ? "bg-amber-50 text-amber-700 border border-amber-200"
+                              : log.status === "Cancelled"
+                              ? "bg-slate-100 text-slate-600 border border-slate-200"
                               : "bg-red-50 text-red-700 border border-red-200"
                           }`}
                         >
